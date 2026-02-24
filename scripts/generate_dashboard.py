@@ -32,6 +32,8 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import json as _json_module
+import urllib.request
 import numpy as np
 import yfinance as yf
 
@@ -272,6 +274,114 @@ def build_portfolio_series(etf_data, portfolios, now):
     return result
 
 
+# ── STEP 4: AI-generated news & insights via Anthropic API ───────────────────
+
+def fetch_ai_news(etf_data, now):
+    """
+    Calls the Anthropic API with today's live ETF metrics and asks Claude to:
+    1. Identify 6 current macro/geopolitical news themes affecting these ETFs
+    2. Write a short insight paragraph for each ETF
+    Returns: { "news": [...6 cards...], "insights": {ticker: text} }
+    Falls back to placeholder text if API key missing or call fails.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        print("  ⚠ ANTHROPIC_API_KEY not set — skipping AI news section")
+        return _fallback_news(etf_data)
+
+    # Build a concise data summary to send to Claude
+    summary_lines = [f"Date: {now.strftime('%d %B %Y')} (AEST)\n"]
+    for ticker, d in etf_data.items():
+        price    = f"${d['price']:.2f}"       if d.get('price')    else 'N/A'
+        day      = f"{d['day_chg']:+.2f}%"    if d.get('day_chg')  else 'N/A'
+        ytd      = f"{d['ytd_ret']:+.1f}%"    if d.get('ytd_ret')  else 'N/A'
+        one_yr   = f"{d['one_yr_ret']:+.1f}%" if d.get('one_yr_ret') else 'N/A'
+        frm_high = f"{d['from_high']:+.1f}%"  if d.get('from_high') else 'N/A'
+        vol      = f"{d['vol_1y']:.1f}%"      if d.get('vol_1y')   else 'N/A'
+        summary_lines.append(
+            f"{ticker} ({d['name']}): "
+            f"price={price}, day={day}, YTD={ytd}, 1Y={one_yr}, from52wHigh={frm_high}, vol={vol}"
+        )
+    data_summary = "\n".join(summary_lines)
+
+    prompt = f"""You are a senior market analyst writing a daily ASX ETF briefing for an Australian investor.
+
+Here is today's live ETF data:
+{data_summary}
+
+Your task: Generate a JSON object with exactly this structure:
+{{
+  "news": [
+    {{
+      "severity": "red"|"amber"|"green",
+      "tag": "short category label (e.g. Trade Policy, Geopolitics, Monetary Policy)",
+      "headline": "concise news headline (max 12 words)",
+      "body": "2-3 sentence explanation of the news event and why it matters for markets (max 60 words)",
+      "impact": "1-2 sentences on which specific ETFs are affected and how (bullish/bearish)"
+    }},
+    ... (exactly 6 news items total)
+  ],
+  "insights": {{
+    "IVV": "2-3 sentence insight connecting today's price action and macro context to IVV specifically (max 70 words)",
+    "FANG": "...",
+    "VAS": "...",
+    "QAU": "...",
+    "NDQ": "...",
+    "VGS": "..."
+  }}
+}}
+
+Rules:
+- News items must reflect REAL current macro themes as of {now.strftime('%B %Y')} (tariffs, central bank policy, geopolitics, tech regulation, commodities, FX)
+- Severity: red = high negative risk, amber = mixed/uncertain, green = positive catalyst
+- Insights must reference the actual YTD and 1Y return numbers provided
+- 2 red items, 2 amber items, 2 green items
+- Return ONLY the JSON object, no preamble, no markdown fences"""
+
+    try:
+        payload = _json_module.dumps({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1500,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = _json_module.loads(resp.read().decode("utf-8"))
+            text = raw["content"][0]["text"].strip()
+            # Strip markdown fences if present
+            if text.startswith("```"):
+                text = "\n".join(text.split("\n")[1:])
+            if text.endswith("```"):
+                text = "\n".join(text.split("\n")[:-1])
+            result = _json_module.loads(text)
+            print(f"  ✓ AI news generated ({len(result.get('news', []))} items, {len(result.get('insights', {}))} insights)")
+            return result
+    except Exception as e:
+        print(f"  ⚠ AI news fetch failed: {e} — using fallback")
+        return _fallback_news(etf_data)
+
+
+def _fallback_news(etf_data):
+    """Minimal fallback if Anthropic API unavailable."""
+    news = [
+        {"severity": "amber", "tag": "Markets", "headline": "Live market data loaded — AI news unavailable",
+         "body": "Set the ANTHROPIC_API_KEY secret in GitHub to enable AI-generated daily news and ETF insights.",
+         "impact": "Add ANTHROPIC_API_KEY to your GitHub repo secrets to enable this section."},
+    ]
+    insights = {t: f"{t}: Add ANTHROPIC_API_KEY to GitHub secrets to enable AI-generated insights for each ETF." for t in etf_data}
+    return {"news": news, "insights": insights}
+
+
 # ── Verdict engine — rules-based on live metrics ─────────────────────────────
 
 def compute_verdict(ytd, one_yr, from_high):
@@ -300,7 +410,7 @@ def arrow(v): return "▲" if (v or 0) > 0 else "▼"
 
 # ── HTML generation ──────────────────────────────────────────────────────────
 
-def generate_html(etf_data, portfolios, portfolio_series, now):
+def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
     tickers   = list(TICKERS.keys())
     today     = now.date()
     today_str = now.strftime("%d %B %Y, %I:%M %p AEST")
@@ -422,6 +532,40 @@ def generate_html(etf_data, portfolios, portfolio_series, now):
     etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{TICKERS[t]["color"]}"></div>{t}</div>' for t in tickers)
     port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:#c8c4bc">{p}</span></div>' for p in portfolios)
 
+    # ── AI News section ───────────────────────────────────────────────────────
+    news_items  = (ai_content or {}).get("news", [])
+    insights    = (ai_content or {}).get("insights", {})
+
+    news_cards_html = ""
+    for item in news_items:
+        sev   = item.get("severity", "amber")
+        tag   = item.get("tag", "")
+        head  = item.get("headline", "")
+        body  = item.get("body", "")
+        impact= item.get("impact", "")
+        icon  = {"red": "🔴", "amber": "🟡", "green": "🟢"}.get(sev, "⚪")
+        news_cards_html += f"""
+      <div class="news-block {sev}">
+        <div class="news-tag">{icon} {tag}</div>
+        <div class="news-head">{head}</div>
+        <div class="news-body">{body}</div>
+        <div class="news-impact">⚡ {impact}</div>
+      </div>"""
+
+    if not news_cards_html:
+        news_cards_html = '<div style="color:#5a5650;font-size:10px;padding:12px 0">No news available. Set ANTHROPIC_API_KEY to enable AI-generated news.</div>'
+
+    insights_html = ""
+    for ticker in tickers:
+        d    = etf_data[ticker]
+        text = insights.get(ticker, "")
+        if text:
+            insights_html += f"""
+      <div class="ins {d['cls']}">
+        <div class="it">{ticker} — {d['name']}</div>
+        <div class="ix">{text}</div>
+      </div>"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -483,6 +627,21 @@ tr:last-child td{{border-bottom:none;}}
 .port-chart-card{{background:#161410;border:1px solid #2a2820;border-radius:4px;padding:22px;margin-top:20px;}}
 .port-stats{{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:14px;}}
 .alloc-note{{font-size:8.5px;color:#6a6660;margin-top:10px;font-style:italic;}}
+.news-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-bottom:24px;}}
+.news-block{{background:#161410;border-radius:3px;padding:15px 17px;border-left:3px solid #3a3830;}}
+.news-block.red{{border-color:#c8440a;}}.news-block.amber{{border-color:#b8920a;}}.news-block.green{{border-color:#1a7a4a;}}
+.news-tag{{font-size:8px;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;font-weight:500;}}
+.news-block.red .news-tag{{color:#c8440a;}}.news-block.amber .news-tag{{color:#b8920a;}}.news-block.green .news-tag{{color:#4aaa74;}}
+.news-head{{font-size:12px;color:#e8e4dc;font-weight:500;margin-bottom:6px;line-height:1.4;}}
+.news-body{{font-size:10px;color:#7a7670;line-height:1.65;}}
+.news-impact{{font-size:9px;margin-top:8px;padding-top:8px;border-top:1px solid #2a2820;letter-spacing:.5px;}}
+.news-block.red .news-impact{{color:#e87050;}}.news-block.amber .news-impact{{color:#d8a830;}}.news-block.green .news-impact{{color:#4aaa74;}}
+.ig{{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:22px;}}
+.ins{{border-left:2px solid #3a3830;padding-left:13px;}}
+.ins.ivv{{border-color:var(--ivv)}}.ins.fang{{border-color:var(--fang)}}.ins.vas{{border-color:var(--vas)}}
+.ins.qau{{border-color:var(--qau)}}.ins.ndq{{border-color:var(--ndq)}}.ins.vgs{{border-color:var(--vgs)}}
+.it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px;}}
+.ix{{font-size:11px;color:#bfbab2;line-height:1.75;}}
 footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:8.5px;color:var(--ink3);}}
 </style>
 </head>
@@ -523,6 +682,11 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
   <div class="verdict-row">{verdicts_html}</div>
 
   <div class="dark">
+    <div class="sec-label">Global Events Impacting Your Portfolio — {now.strftime('%d %b %Y')}</div>
+    <div class="news-grid">{news_cards_html}</div>
+
+    {'<div class="sec-label">ETF Insights — In Context of Global Events</div><div class="ig">' + insights_html + '</div>' if insights_html else ''}
+
     <div class="sec-label">Auto-Computed Portfolio Allocations — Based on Today's Live 1Y Returns &amp; Volatility</div>
 
     <div class="tbl-card" style="background:#1a1810;border-color:#2a2820;padding:18px 20px;margin-bottom:0">
@@ -626,8 +790,11 @@ def main():
     for pname, ps in portfolio_series.items():
         print(f"  {pname:15s} → ${ps['final']:>10,.0f}  ({ps['total_pct']:+.1f}%  CAGR {ps['cagr']:.1f}%)")
 
+    print("\n📰 Fetching AI-generated news & insights (Anthropic API)...")
+    ai_content = fetch_ai_news(etf_data, now)
+
     print("\n🎨 Generating HTML...")
-    html = generate_html(etf_data, portfolios, portfolio_series, now)
+    html = generate_html(etf_data, portfolios, portfolio_series, now, ai_content)
 
     out = Path(__file__).parent.parent / "output"
     out.mkdir(exist_ok=True)
