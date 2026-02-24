@@ -373,7 +373,7 @@ Rules:
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             raw = _json_module.loads(resp.read().decode("utf-8"))
             text = raw["content"][0]["text"].strip()
             # Strip markdown fences if present
