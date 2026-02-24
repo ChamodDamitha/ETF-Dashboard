@@ -3,7 +3,7 @@ name: Daily ASX ETF Dashboard
 on:
   # Run every weekday at 8:00 AM AEST (= 22:00 UTC previous day)
   schedule:
-    - cron: "0 22 * * 0-4"   # Sun–Thu UTC = Mon–Fri AEST
+    - cron: "0 1 * * 1-5"   # Tue–Sat 1:00 AM UTC = Mon–Fri 12:00 PM AEDT
 
   # Also allow manual trigger from GitHub Actions UI
   workflow_dispatch:
