@@ -48,6 +48,70 @@ TICKERS = {
     "VGS":  {"yahoo": "VGS.AX",   "name": "Vanguard MSCI Intl ETF",      "color": "#0a6a8a", "cls": "vgs"},
 }
 
+# ── Candidate pool: popular ASX ETFs screened at runtime for top performers ──
+# Each run the top N by 1Y return (not already in TICKERS) are added to the
+# live report, so the dashboard always shows what the market is rewarding.
+CANDIDATE_POOL = {
+    "NDQ":   {"yahoo": "NDQ.AX",   "name": "BetaShares Nasdaq 100 ETF"},
+    "SEMI":  {"yahoo": "SEMI.AX",  "name": "BetaShares Global Semiconductors ETF"},
+    "HACK":  {"yahoo": "HACK.AX",  "name": "BetaShares Cybersecurity ETF"},
+    "RBTZ":  {"yahoo": "RBTZ.AX",  "name": "BetaShares Global Robotics & AI ETF"},
+    "ASIA":  {"yahoo": "ASIA.AX",  "name": "BetaShares Asia Technology Tigers ETF"},
+    "ETHI":  {"yahoo": "ETHI.AX",  "name": "BetaShares Global Sustainability Leaders ETF"},
+    "QUAL":  {"yahoo": "QUAL.AX",  "name": "VanEck MSCI Intl Quality ETF"},
+    "A200":  {"yahoo": "A200.AX",  "name": "BetaShares Australia 200 ETF"},
+    "IOZ":   {"yahoo": "IOZ.AX",   "name": "iShares Core S&P/ASX 200 ETF"},
+    "GDX":   {"yahoo": "GDX.AX",   "name": "VanEck Gold Miners ETF"},
+    "DRUG":  {"yahoo": "DRUG.AX",  "name": "BetaShares Healthcare Innovators ETF"},
+    "VDHG":  {"yahoo": "VDHG.AX",  "name": "Vanguard Diversified High Growth ETF"},
+}
+
+# Extra colors assigned to dynamically discovered ETFs (cycles if needed)
+_EXTRA_COLORS = ["#8a2a6a", "#2a6a4a", "#6a3a8a", "#8a5a2a", "#2a4a8a", "#5a8a2a"]
+
+
+# ── STEP 0: Discover top-performing ETFs from the candidate pool ─────────────
+
+def discover_top_etfs(now, n=3):
+    """
+    Screens CANDIDATE_POOL for the top N ETFs by 1-year return (excluding any
+    already present in TICKERS).  Returns a list of (ticker, meta) tuples ready
+    to be merged into TICKERS before the main data fetch.
+
+    Uses a lightweight 1-year history fetch (no .info call) to keep it fast.
+    Any candidates that error are silently skipped.
+    """
+    today        = now.date()
+    one_year_ago = today - relativedelta(years=1)
+    results      = []
+
+    for ticker, meta in CANDIDATE_POOL.items():
+        if ticker in TICKERS:
+            continue
+        try:
+            hist  = yf.Ticker(meta["yahoo"]).history(
+                start=str(one_year_ago), end=str(today), auto_adjust=True
+            )
+            close = hist["Close"] if not hist.empty else None
+            if close is None or len(close) < 20:
+                continue
+            one_yr = (close.iloc[-1] / close.iloc[0] - 1) * 100
+            results.append((ticker, meta, one_yr))
+        except Exception:
+            continue
+
+    results.sort(key=lambda x: -x[2])
+    top = results[:n]
+
+    discovered = {}
+    for i, (ticker, meta, one_yr) in enumerate(top):
+        color = _EXTRA_COLORS[i % len(_EXTRA_COLORS)]
+        cls   = ticker.lower()
+        discovered[ticker] = {**meta, "color": color, "cls": cls}
+        print(f"  [{ticker}] discovered — 1Y {one_yr:+.1f}%  ({meta['name']})")
+
+    return discovered
+
 
 # ── STEP 1: Fetch all live data ───────────────────────────────────────────────
 
@@ -188,7 +252,7 @@ def compute_portfolio_allocations(etf_data):
 
     Returns dict: { portfolio_name: { ticker: weight, ... } }
     """
-    tickers = list(TICKERS.keys())
+    tickers = list(etf_data.keys())
 
     one_yr = {t: etf_data[t].get("one_yr_ret") or 0 for t in tickers}
     vols   = {t: etf_data[t].get("vol_1y") or 15.0 for t in tickers}  # default 15% if missing
@@ -287,7 +351,7 @@ def generate_ai_portfolios(etf_data, now):
     if not api_key:
         return None
 
-    tickers = list(TICKERS.keys())
+    tickers = list(etf_data.keys())
 
     summary_lines = [f"Date: {now.strftime('%d %B %Y')} (AEST)\n"]
     for ticker, d in etf_data.items():
@@ -446,24 +510,10 @@ Your task: Generate a JSON object with exactly this structure:
     ... (exactly 6 news items total)
   ],
   "insights": {{
-    "IVV": "2-3 sentence insight connecting today's price action and macro context to IVV specifically (max 70 words)",
-    "FANG": "...",
-    "VAS": "...",
-    "QAU": "...",
-    "GOLD": "...",
-    "VGS": "..."
+    {', '.join(f'"{t}": "2-3 sentence insight for {t} (max 70 words)"' for t in etf_data)}
   }},
   "verdicts": {{
-    "IVV": {{
-      "label": "Strong Buy"|"Buy"|"Accumulate"|"Hold"|"Watch",
-      "cls": "buy"|"buy"|"accum"|"hold"|"watch",
-      "note": "1-2 sentence reasoning grounded in the historical returns, current momentum, volatility, distance from 52W high, and the macro news context above (max 25 words)"
-    }},
-    "FANG": {{}},
-    "VAS": {{}},
-    "QAU": {{}},
-    "GOLD": {{}},
-    "VGS": {{}}
+    {', '.join(f'"{t}": {{"label": "Strong Buy|Buy|Accumulate|Hold|Watch", "cls": "buy|accum|hold|watch", "note": "max 25 words"}}' for t in etf_data)}
   }}
 }}
 
@@ -577,7 +627,7 @@ def arrow(v): return "▲" if (v or 0) > 0 else "▼"
 # ── HTML generation ──────────────────────────────────────────────────────────
 
 def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
-    tickers   = list(TICKERS.keys())
+    tickers   = list(etf_data.keys())
     today     = now.date()
     today_str = now.strftime("%d %B %Y, %I:%M %p AEST")
     start_yr  = today.year - 10
@@ -699,7 +749,7 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
           <div style="font-size:8px;color:#5a5650;line-height:1.5">{ps['desc']}</div>
         </div>"""
 
-    etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{TICKERS[t]["color"]}"></div>{t}</div>' for t in tickers)
+    etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{etf_data[t]["color"]}"></div>{t}</div>' for t in tickers)
     port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:#c8c4bc">{p}</span></div>' for p in portfolios)
 
     # ── AI content: news, insights ───────────────────────────────────────────
@@ -736,6 +786,13 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
         <div class="ix">{text}</div>
       </div>"""
 
+    # ── Dynamic CSS strings — built from all active tickers (core + discovered) ─
+    css_vars      = ";".join(f"--{etf_data[t]['cls']}:{etf_data[t]['color']}" for t in tickers)
+    pc_before_css = "".join(f".pc.{etf_data[t]['cls']}::before{{background:var(--{etf_data[t]['cls']})}}" for t in tickers)
+    pc_ticker_css = "".join(f".pc.{etf_data[t]['cls']} .pc-ticker{{color:var(--{etf_data[t]['cls']})}}" for t in tickers)
+    ins_css       = "".join(f".ins.{etf_data[t]['cls']}{{border-color:var(--{etf_data[t]['cls']})}}" for t in tickers)
+    grid_cols     = f"repeat({len(tickers)},1fr)"
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -745,7 +802,7 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 :root{{--bg:#f4f1e8;--bg2:#ebe8de;--card:#fff;--ink:#1c1916;--ink2:#5a5650;--ink3:#9a9690;--border:#dedad0;
-  --ivv:#c8440a;--fang:#1a3a8a;--vas:#1a7a4a;--qau:#b8920a;--gold:#a07820;--vgs:#0a6a8a;}}
+  {css_vars};}}
 *{{margin:0;padding:0;box-sizing:border-box;}}body{{background:var(--bg);color:var(--ink);font-family:'DM Mono',monospace;}}
 header{{padding:34px 48px 22px;border-bottom:1px solid var(--border);display:flex;align-items:flex-end;justify-content:space-between;}}
 .h-title{{font-family:'Fraunces',serif;font-size:38px;font-weight:900;letter-spacing:-2px;line-height:1;}}
@@ -756,14 +813,12 @@ header{{padding:34px 48px 22px;border-bottom:1px solid var(--border);display:fle
 .main{{padding:26px 48px 56px;max-width:1440px;margin:0 auto;}}
 .sec-label{{font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;gap:10px;}}
 .sec-label::after{{content:'';flex:1;height:1px;background:var(--border);}}
-.cards-grid{{display:grid;grid-template-columns:repeat(6,1fr);gap:11px;margin-bottom:22px;}}
+.cards-grid{{display:grid;grid-template-columns:{grid_cols};gap:11px;margin-bottom:22px;}}
 .pc{{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:14px 13px;position:relative;overflow:hidden;}}
 .pc::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;}}
-.pc.ivv::before{{background:var(--ivv)}}.pc.fang::before{{background:var(--fang)}}.pc.vas::before{{background:var(--vas)}}
-.pc.qau::before{{background:var(--qau)}}.pc.gold::before{{background:var(--gold)}}.pc.vgs::before{{background:var(--vgs)}}
+{pc_before_css}
 .pc-ticker{{font-size:10px;letter-spacing:2px;font-weight:500;}}
-.pc.ivv .pc-ticker{{color:var(--ivv)}}.pc.fang .pc-ticker{{color:var(--fang)}}.pc.vas .pc-ticker{{color:var(--vas)}}
-.pc.qau .pc-ticker{{color:var(--qau)}}.pc.gold .pc-ticker{{color:var(--gold)}}.pc.vgs .pc-ticker{{color:var(--vgs)}}
+{pc_ticker_css}
 .pc-name{{font-size:8.5px;color:var(--ink3);margin-bottom:8px;line-height:1.4;min-height:20px;}}
 .pc-price{{font-family:'Fraunces',serif;font-size:23px;font-weight:900;letter-spacing:-1px;}}
 .pc-chg{{font-size:11px;font-weight:500;margin:3px 0 10px;}}
@@ -808,8 +863,7 @@ tr:last-child td{{border-bottom:none;}}
 .news-block.red .news-impact{{color:#e87050;}}.news-block.amber .news-impact{{color:#d8a830;}}.news-block.green .news-impact{{color:#4aaa74;}}
 .ig{{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:22px;}}
 .ins{{border-left:2px solid #3a3830;padding-left:13px;}}
-.ins.ivv{{border-color:var(--ivv)}}.ins.fang{{border-color:var(--fang)}}.ins.vas{{border-color:var(--vas)}}
-.ins.qau{{border-color:var(--qau)}}.ins.gold{{border-color:var(--gold)}}.ins.vgs{{border-color:var(--vgs)}}
+{ins_css}
 .it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px;}}
 .ix{{font-size:11px;color:#bfbab2;line-height:1.75;}}
 footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:8.5px;color:var(--ink3);}}
@@ -882,7 +936,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
     <div class="sec-label">Annual Returns — Computed Live from Yahoo Finance History</div>
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Year</th>{''.join(f'<th><span class="dot" style="background:{TICKERS[t]["color"]}"></span>{t}</th>' for t in tickers)}</tr></thead>
+      <thead><tr><th>Year</th>{''.join(f'<th><span class="dot" style="background:{etf_data[t]["color"]}"></span>{t}</th>' for t in tickers)}</tr></thead>
       <tbody>{table_rows}</tbody>
     </table>
     </div>
@@ -1051,7 +1105,15 @@ def main():
     print(f"\n🚀 ASX ETF Dashboard — {now.strftime('%d %b %Y %H:%M AEST')}")
     print("  Fully dynamic. Prices, returns, volatility & allocations all computed today.\n")
 
-    print("📡 Fetching live data from Yahoo Finance...")
+    print("🔍 Screening candidate pool for top performers...")
+    discovered = discover_top_etfs(now, n=3)
+    TICKERS.update(discovered)
+    if discovered:
+        print(f"  Added {len(discovered)} high-performing ETF(s) to this run: {', '.join(discovered)}")
+    else:
+        print("  No candidates outperformed the core list — proceeding with base ETFs.")
+
+    print("\n📡 Fetching live data from Yahoo Finance...")
     etf_data = fetch_all_data(now)
 
     print("\n🤖 Generating AI-powered portfolio strategies (Anthropic API)...")
