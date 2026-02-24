@@ -643,6 +643,44 @@ tr:last-child td{{border-bottom:none;}}
 .it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px;}}
 .ix{{font-size:11px;color:#bfbab2;line-height:1.75;}}
 footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:8.5px;color:var(--ink3);}}
+@media(max-width:1024px){{
+  .cards-grid{{grid-template-columns:repeat(3,1fr);}}
+  .verdict-row{{grid-template-columns:repeat(3,1fr);}}
+  .news-grid{{grid-template-columns:repeat(2,1fr);}}
+  .ig{{grid-template-columns:repeat(2,1fr);}}
+}}
+@media(max-width:768px){{
+  header{{padding:20px 22px 14px;}}
+  .main{{padding:16px 20px 36px;}}
+  footer{{padding:12px 20px;flex-direction:column;gap:5px;}}
+  .cards-grid{{grid-template-columns:repeat(2,1fr);gap:9px;}}
+  .verdict-row{{grid-template-columns:repeat(2,1fr);}}
+  .news-grid{{grid-template-columns:1fr;}}
+  .ig{{grid-template-columns:1fr;}}
+  .port-stats{{grid-template-columns:repeat(2,1fr);}}
+  .chart-card,.tbl-card{{padding:16px 14px;}}
+  .dark{{padding:20px 18px;}}
+  .port-chart-card{{padding:16px 14px;}}
+}}
+@media(max-width:480px){{
+  header{{padding:14px;flex-direction:column;align-items:flex-start;gap:10px;}}
+  .h-title{{font-size:26px;letter-spacing:-1px;}}
+  .h-right{{text-align:left;}}
+  .main{{padding:12px 12px 28px;}}
+  footer{{padding:10px 12px;flex-direction:column;gap:5px;}}
+  .cards-grid{{grid-template-columns:repeat(2,1fr);gap:8px;}}
+  .verdict-row{{grid-template-columns:repeat(2,1fr);gap:8px;}}
+  .news-grid{{grid-template-columns:1fr;}}
+  .ig{{grid-template-columns:1fr;}}
+  .port-stats{{grid-template-columns:1fr;}}
+  .chart-card,.tbl-card{{padding:12px 10px;}}
+  .dark{{padding:16px 12px;}}
+  .port-chart-card{{padding:12px 10px;}}
+  .chart-hdr{{flex-direction:column;gap:10px;}}
+  .pc{{padding:11px 10px;}}
+  .pc-price{{font-size:18px;}}
+  .legend{{gap:7px;}}
+}}
 </style>
 </head>
 <body>
@@ -672,10 +710,12 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
   <div class="tbl-card">
     <div class="sec-label">Annual Returns — Computed Live from Yahoo Finance History</div>
+    <div style="overflow-x:auto">
     <table>
       <thead><tr><th>Year</th>{''.join(f'<th><span class="dot" style="background:{TICKERS[t]["color"]}"></span>{t}</th>' for t in tickers)}</tr></thead>
       <tbody>{table_rows}</tbody>
     </table>
+    </div>
   </div>
 
   <div class="sec-label">Verdict — Rules-Based on Today's Live Metrics</div>
@@ -690,6 +730,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
     <div class="sec-label">Auto-Computed Portfolio Allocations — Based on Today's Live 1Y Returns &amp; Volatility</div>
 
     <div class="tbl-card" style="background:#1a1810;border-color:#2a2820;padding:18px 20px;margin-bottom:0">
+      <div style="overflow-x:auto">
       <table>
         <thead>
           <tr>
@@ -699,6 +740,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
         </thead>
         <tbody>{alloc_rows}</tbody>
       </table>
+      </div>
       <div class="alloc-note">
         Momentum: rank-weighted by 1Y return (top performers get most weight, negative-return ETFs excluded) ·
         Risk-Adjusted: weighted by 1Y return ÷ annualised volatility (Sharpe proxy) ·
