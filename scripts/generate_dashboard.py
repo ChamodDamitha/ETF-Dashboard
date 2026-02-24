@@ -135,7 +135,6 @@ def fetch_all_data(now):
     ten_years_ago  = date(today.year - 10, 1, 1)
     five_years_ago = today - relativedelta(years=5)
     one_year_ago   = today - relativedelta(years=1)
-    fourteen_mo    = today - relativedelta(months=14)
 
     result = {}
 
@@ -191,12 +190,16 @@ def fetch_all_data(now):
             # 1-year daily volatility (annualised) — used for risk-adjusted weighting
             vol_1y = None
             daily_rets_1y = []
+            daily_rets_10y = []
             if close is not None:
                 sl = close[close.index.date >= one_year_ago]
                 if len(sl) > 20:
                     dr = sl.pct_change().dropna()
                     vol_1y        = float(dr.std() * np.sqrt(252) * 100)
                     daily_rets_1y = dr.tolist()
+                sl10 = close[close.index.date >= ten_years_ago]
+                if len(sl10) > 200:
+                    daily_rets_10y = sl10.pct_change().dropna().tolist()
 
             # Sharpe & Sortino ratios (1Y, risk-free = RISK_FREE_RATE %)
             sharpe_1y  = None
@@ -244,15 +247,15 @@ def fetch_all_data(now):
             if ytd_ret is not None:
                 annual_returns[str(today.year)] = round(ytd_ret, 2)
 
-            # 14-month monthly indexed data for line chart
+            # 10-year monthly indexed data for line chart (resampled from daily history)
             monthly_indexed = []
-            hist_mo = t.history(
-                start=str(fourteen_mo), end=str(today),
-                interval="1mo", auto_adjust=True,
-            )
-            if not hist_mo.empty and len(hist_mo) > 1:
-                base = hist_mo["Close"].iloc[0]
-                monthly_indexed = [round(v / base * 100, 2) for v in hist_mo["Close"]]
+            if close is not None:
+                cl10 = close[close.index.date >= ten_years_ago]
+                if len(cl10) > 1:
+                    mo_close = cl10.resample("ME").last().dropna()
+                    if len(mo_close) > 1:
+                        base = mo_close.iloc[0]
+                        monthly_indexed = [round(v / base * 100, 2) for v in mo_close]
 
             result[ticker] = {
                 **meta,
@@ -272,6 +275,7 @@ def fetch_all_data(now):
                 "ma_200d":         ma_200d,
                 "is_above_200ma":  is_above_200ma,
                 "daily_rets_1y":   daily_rets_1y,
+                "daily_rets_10y":  daily_rets_10y,
                 "w52_high":        w52_high,
                 "w52_low":         w52_low,
                 "from_high":       from_high,
@@ -293,7 +297,7 @@ def fetch_all_data(now):
             print(f"ERROR — {exc}")
             result[ticker] = {
                 **meta, "price": None, "error": str(exc),
-                "annual_returns": {}, "monthly_indexed": [], "daily_rets_1y": [],
+                "annual_returns": {}, "monthly_indexed": [], "daily_rets_1y": [], "daily_rets_10y": [],
                 "one_yr_ret": None, "ytd_ret": None, "vol_1y": None,
                 "five_yr_ret": None, "ten_yr_ret": None, "twenty_yr_ret": None,
                 "sharpe_1y": None, "sortino_1y": None,
@@ -409,10 +413,10 @@ def build_portfolio_series(etf_data, portfolios, now):
 # ── STEP 3a: Analytics — correlations, regime, DCA, benchmarks ───────────────
 
 def compute_correlations(etf_data):
-    """Pairwise Pearson correlations of 1Y daily returns for all active ETFs."""
+    """Pairwise Pearson correlations of 10Y daily returns for all active ETFs."""
     tickers = list(etf_data.keys())
-    series  = {t: etf_data[t].get("daily_rets_1y", []) for t in tickers}
-    valid   = [t for t in tickers if len(series[t]) > 30]
+    series  = {t: etf_data[t].get("daily_rets_10y", []) for t in tickers}
+    valid   = [t for t in tickers if len(series[t]) > 200]
     matrix  = {}
     for t1 in valid:
         matrix[t1] = {}
@@ -957,10 +961,15 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     # Extract AI verdicts early so they're available for cards and verdict rows
     ai_verdicts = (ai_content or {}).get("verdicts", {})
 
-    # Build month labels for the 14-month chart
+    # Build month labels for the 10-year monthly chart (dynamic based on actual data length)
+    n_months_data = max(
+        (len(etf_data[t].get("monthly_indexed", [])) for t in tickers),
+        default=120,
+    )
+    n_months_data = max(n_months_data, 2)
     month_labels = [
         (datetime(now.year, now.month, 1) - relativedelta(months=i)).strftime("%b %y")
-        for i in range(13, -1, -1)
+        for i in range(n_months_data - 1, -1, -1)
     ]
 
     # Annual returns table (last 6 years)
@@ -1076,8 +1085,8 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     for ticker in tickers:
         d    = etf_data[ticker]
         vals = d.get("monthly_indexed", [])
-        while len(vals) < 14: vals = [100.0] + vals
-        vals = vals[-14:]
+        while len(vals) < n_months_data: vals = [100.0] + vals
+        vals = vals[-n_months_data:]
         monthly_ds.append({
             "label": ticker, "data": vals,
             "borderColor": d["color"],
@@ -1417,8 +1426,8 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
   <div class="chart-card">
     <div class="chart-hdr">
-      <div><div class="chart-t">14-Month Performance — Indexed to 100</div>
-      <div class="chart-s">Monthly closing prices · Fetched live from Yahoo Finance · AUD</div></div>
+      <div><div class="chart-t">10-Year Monthly Performance — Indexed to 100</div>
+      <div class="chart-s">Monthly closing prices · 10-year lookback · Fetched live from Yahoo Finance · AUD</div></div>
       <div class="legend">{etf_legend}</div>
     </div>
     <canvas id="etfChart" style="max-height:270px"></canvas>
