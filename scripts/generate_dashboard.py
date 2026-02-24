@@ -462,6 +462,9 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
     today_str = now.strftime("%d %B %Y, %I:%M %p AEST")
     start_yr  = today.year - 10
 
+    # Extract AI verdicts early so they're available for cards and verdict rows
+    ai_verdicts = (ai_content or {}).get("verdicts", {})
+
     # Build month labels for the 14-month chart
     month_labels = [
         (datetime(now.year, now.month, 1) - relativedelta(months=i)).strftime("%b %y")
@@ -579,10 +582,9 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
     etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{TICKERS[t]["color"]}"></div>{t}</div>' for t in tickers)
     port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:#c8c4bc">{p}</span></div>' for p in portfolios)
 
-    # ── AI content: news, insights, verdicts ─────────────────────────────────
+    # ── AI content: news, insights ───────────────────────────────────────────
     news_items  = (ai_content or {}).get("news", [])
     insights    = (ai_content or {}).get("insights", {})
-    ai_verdicts = (ai_content or {}).get("verdicts", {})
 
     news_cards_html = ""
     for item in news_items:
