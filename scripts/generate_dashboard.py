@@ -43,12 +43,12 @@ INITIAL = 10_000.0
 # ── Only static config: ticker identifiers and display metadata ──────────────
 # NO prices, NO returns, NO weights — all fetched/computed live
 TICKERS = {
-    "IVV":  {"yahoo": "IVV.AX",  "name": "iShares S&P 500 ETF",         "color": "#c8440a", "cls": "ivv"},
-    "FANG": {"yahoo": "FANG.AX", "name": "Global X FANG+ ETF",          "color": "#1a3a8a", "cls": "fang"},
-    "VAS":  {"yahoo": "VAS.AX",  "name": "Vanguard Aust. Shares ETF",   "color": "#1a7a4a", "cls": "vas"},
-    "QAU":  {"yahoo": "QAU.AX",  "name": "BetaShares Gold Bullion ETF", "color": "#b8920a", "cls": "qau"},
-    "NDQ":  {"yahoo": "NDQ.AX",  "name": "BetaShares NASDAQ 100 ETF",   "color": "#7a1a8a", "cls": "ndq"},
-    "VGS":  {"yahoo": "VGS.AX",  "name": "Vanguard MSCI Intl ETF",      "color": "#0a6a8a", "cls": "vgs"},
+    "IVV":  {"yahoo": "IVV.AX",   "name": "iShares S&P 500 ETF",         "color": "#c8440a", "cls": "ivv"},
+    "FANG": {"yahoo": "FANG.AX",  "name": "Global X FANG+ ETF",          "color": "#1a3a8a", "cls": "fang"},
+    "VAS":  {"yahoo": "VAS.AX",   "name": "Vanguard Aust. Shares ETF",   "color": "#1a7a4a", "cls": "vas"},
+    "QAU":  {"yahoo": "QAU.AX",   "name": "BetaShares Gold Bullion ETF", "color": "#b8920a", "cls": "qau"},
+    "GOLD": {"yahoo": "GOLD.AX",  "name": "ETFS Physical Gold ETF",      "color": "#a07820", "cls": "gold"},
+    "VGS":  {"yahoo": "VGS.AX",   "name": "Vanguard MSCI Intl ETF",      "color": "#0a6a8a", "cls": "vgs"},
 }
 
 
@@ -326,7 +326,7 @@ Your task: Generate a JSON object with exactly this structure:
     "FANG": "...",
     "VAS": "...",
     "QAU": "...",
-    "NDQ": "...",
+    "GOLD": "...",
     "VGS": "..."
   }}
 }}
@@ -575,7 +575,7 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 :root{{--bg:#f4f1e8;--bg2:#ebe8de;--card:#fff;--ink:#1c1916;--ink2:#5a5650;--ink3:#9a9690;--border:#dedad0;
-  --ivv:#c8440a;--fang:#1a3a8a;--vas:#1a7a4a;--qau:#b8920a;--ndq:#7a1a8a;--vgs:#0a6a8a;}}
+  --ivv:#c8440a;--fang:#1a3a8a;--vas:#1a7a4a;--qau:#b8920a;--gold:#a07820;--vgs:#0a6a8a;}}
 *{{margin:0;padding:0;box-sizing:border-box;}}body{{background:var(--bg);color:var(--ink);font-family:'DM Mono',monospace;}}
 header{{padding:34px 48px 22px;border-bottom:1px solid var(--border);display:flex;align-items:flex-end;justify-content:space-between;}}
 .h-title{{font-family:'Fraunces',serif;font-size:38px;font-weight:900;letter-spacing:-2px;line-height:1;}}
@@ -590,10 +590,10 @@ header{{padding:34px 48px 22px;border-bottom:1px solid var(--border);display:fle
 .pc{{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:14px 13px;position:relative;overflow:hidden;}}
 .pc::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;}}
 .pc.ivv::before{{background:var(--ivv)}}.pc.fang::before{{background:var(--fang)}}.pc.vas::before{{background:var(--vas)}}
-.pc.qau::before{{background:var(--qau)}}.pc.ndq::before{{background:var(--ndq)}}.pc.vgs::before{{background:var(--vgs)}}
+.pc.qau::before{{background:var(--qau)}}.pc.gold::before{{background:var(--gold)}}.pc.vgs::before{{background:var(--vgs)}}
 .pc-ticker{{font-size:10px;letter-spacing:2px;font-weight:500;}}
 .pc.ivv .pc-ticker{{color:var(--ivv)}}.pc.fang .pc-ticker{{color:var(--fang)}}.pc.vas .pc-ticker{{color:var(--vas)}}
-.pc.qau .pc-ticker{{color:var(--qau)}}.pc.ndq .pc-ticker{{color:var(--ndq)}}.pc.vgs .pc-ticker{{color:var(--vgs)}}
+.pc.qau .pc-ticker{{color:var(--qau)}}.pc.gold .pc-ticker{{color:var(--gold)}}.pc.vgs .pc-ticker{{color:var(--vgs)}}
 .pc-name{{font-size:8.5px;color:var(--ink3);margin-bottom:8px;line-height:1.4;min-height:20px;}}
 .pc-price{{font-family:'Fraunces',serif;font-size:23px;font-weight:900;letter-spacing:-1px;}}
 .pc-chg{{font-size:11px;font-weight:500;margin:3px 0 10px;}}
@@ -639,7 +639,7 @@ tr:last-child td{{border-bottom:none;}}
 .ig{{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:22px;}}
 .ins{{border-left:2px solid #3a3830;padding-left:13px;}}
 .ins.ivv{{border-color:var(--ivv)}}.ins.fang{{border-color:var(--fang)}}.ins.vas{{border-color:var(--vas)}}
-.ins.qau{{border-color:var(--qau)}}.ins.ndq{{border-color:var(--ndq)}}.ins.vgs{{border-color:var(--vgs)}}
+.ins.qau{{border-color:var(--qau)}}.ins.gold{{border-color:var(--gold)}}.ins.vgs{{border-color:var(--vgs)}}
 .it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px;}}
 .ix{{font-size:11px;color:#bfbab2;line-height:1.75;}}
 footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:8.5px;color:var(--ink3);}}
@@ -687,7 +687,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 <header>
   <div>
     <div class="h-title">ASX <em>ETF</em> Pulse</div>
-    <div class="h-sub">IVV · FANG · VAS · QAU · NDQ · VGS &nbsp;|&nbsp; AUD &nbsp;|&nbsp; Fully Dynamic</div>
+    <div class="h-sub">IVV · FANG · VAS · QAU · GOLD · VGS &nbsp;|&nbsp; AUD &nbsp;|&nbsp; Fully Dynamic</div>
   </div>
   <div class="h-right">
     <strong>{today_str}</strong>
