@@ -8,14 +8,13 @@ DYNAMIC ELEMENTS:
   ✓ YTD return, 1-year return, 10-year annual returns per calendar year
   ✓ AUM, MER, dividend yield, P/E
   ✓ 14-month monthly indexed chart
-  ✓ Portfolio allocations — auto-weighted daily by 1Y performance rank
+  ✓ Portfolio allocations — AI-recommended by Claude using live metrics, returns & volatility
   ✓ 10-year portfolio simulation — all returns from Yahoo Finance history
   ✓ Verdict ratings — AI-powered using live metrics, historical data & news context
 
-PORTFOLIO WEIGHTING STRATEGIES (all auto-computed):
-  Momentum   — weighted by rank of 1Y return (best performers get most weight)
-  Risk-Adj   — weighted by 1Y return / volatility (Sharpe-style)
-  Equal      — equal weight across all ETFs
+PORTFOLIO STRATEGIES:
+  AI-powered — Claude recommends 3 distinct strategies based on live data
+  Fallback   — algorithmic (Momentum, Risk-Adj, Equal) if AI unavailable
 
 Dependencies: yfinance>=0.2.36, python-dateutil>=2.8.2, numpy>=1.24
 """
@@ -270,6 +269,127 @@ def build_portfolio_series(etf_data, portfolios, now):
         }
 
     return result
+
+
+# ── STEP 3b: AI-generated portfolio strategies via Anthropic API ──────────────
+
+def generate_ai_portfolios(etf_data, now):
+    """
+    Calls the Anthropic API to generate 3 distinct AI-recommended portfolio
+    strategies based on today's live ETF metrics, returns & volatility.
+
+    Returns a dict in the same format as compute_portfolio_allocations(), with
+    an added 'rationale' field per portfolio.
+    Falls back to None if the API is unavailable (caller then uses
+    compute_portfolio_allocations() as fallback).
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return None
+
+    tickers = list(TICKERS.keys())
+
+    summary_lines = [f"Date: {now.strftime('%d %B %Y')} (AEST)\n"]
+    for ticker, d in etf_data.items():
+        price    = f"${d['price']:.2f}"       if d.get('price')        else 'N/A'
+        ytd      = f"{d['ytd_ret']:+.1f}%"    if d.get('ytd_ret') is not None    else 'N/A'
+        one_yr   = f"{d['one_yr_ret']:+.1f}%" if d.get('one_yr_ret') is not None else 'N/A'
+        vol      = f"{d['vol_1y']:.1f}%"      if d.get('vol_1y') is not None     else 'N/A'
+        frm_high = f"{d['from_high']:+.1f}%"  if d.get('from_high') is not None  else 'N/A'
+        ann      = d.get('annual_returns', {})
+        recent   = {yr: v for yr, v in ann.items() if int(yr) >= (now.year - 5)}
+        ann_str  = ", ".join(f"{yr}:{v:+.1f}%" for yr, v in sorted(recent.items()))
+        summary_lines.append(
+            f"{ticker} ({d['name']}): price={price}, YTD={ytd}, 1Y={one_yr}, "
+            f"vol={vol}, from52wHigh={frm_high}, annualReturns=[{ann_str}]"
+        )
+    data_summary = "\n".join(summary_lines)
+    tickers_list = ", ".join(tickers)
+
+    prompt = f"""You are a portfolio manager constructing 3 distinct ETF portfolio strategies for an Australian retail investor.
+
+Available ETFs: {tickers_list}
+
+Today's live data:
+{data_summary}
+
+Create exactly 3 portfolios with genuinely different investment philosophies (e.g. aggressive growth, balanced, defensive/income).
+For each portfolio:
+1. Choose a short descriptive name (3-4 words max, e.g. "Growth Tilt", "Defensive Core", "Balanced Blend")
+2. Allocate weights across ALL six ETFs (must sum to exactly 100, whole numbers only, minimum 0)
+3. Write a single concise sentence (max 20 words) explaining the strategy rationale based on the current data
+
+Return ONLY a JSON object with this exact structure:
+{{
+  "portfolios": [
+    {{
+      "name": "Portfolio Name",
+      "rationale": "One sentence rationale grounded in today's data.",
+      "allocations": {{"IVV": 30, "FANG": 20, "VAS": 20, "QAU": 10, "GOLD": 10, "VGS": 10}}
+    }},
+    {{...}},
+    {{...}}
+  ]
+}}
+
+Rules:
+- Each portfolio's allocations must sum to exactly 100
+- All weights must be non-negative integers
+- The 3 portfolios must be meaningfully distinct from each other
+- Base the allocations on the actual performance data provided
+- Return ONLY the JSON, no markdown fences, no commentary"""
+
+    try:
+        payload = _json_module.dumps({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 800,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw  = _json_module.loads(resp.read().decode("utf-8"))
+            text = raw["content"][0]["text"].strip()
+            if text.startswith("```"):
+                text = "\n".join(text.split("\n")[1:])
+            if text.endswith("```"):
+                text = "\n".join(text.split("\n")[:-1])
+            result = _json_module.loads(text)
+
+        portfolios_ai = result.get("portfolios", [])
+        if len(portfolios_ai) != 3:
+            raise ValueError(f"Expected 3 portfolios, got {len(portfolios_ai)}")
+
+        colors = ["#c8440a", "#1a7a4a", "#4a6ad8"]
+        dashed = [False, False, True]
+        portfolios_dict = {}
+        for i, p in enumerate(portfolios_ai):
+            raw_allocs = p.get("allocations", {})
+            allocs = {t: raw_allocs.get(t, 0) / 100.0 for t in tickers}
+            total  = sum(allocs.values()) or 1
+            allocs = {t: round(v / total, 4) for t, v in allocs.items()}
+            portfolios_dict[p["name"]] = {
+                "allocs":    allocs,
+                "color":     colors[i],
+                "dashed":    dashed[i],
+                "rationale": p.get("rationale", ""),
+            }
+
+        print(f"  ✓ AI portfolios: {', '.join(portfolios_dict.keys())}")
+        return portfolios_dict
+
+    except Exception as e:
+        print(f"  ⚠ AI portfolio generation failed: {e} — using computed fallback")
+        return None
 
 
 # ── STEP 4: AI-generated news & insights via Anthropic API ───────────────────
@@ -777,7 +897,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
     {'<div class="sec-label">ETF Insights — In Context of Global Events</div><div class="ig">' + insights_html + '</div>' if insights_html else ''}
 
-    <div class="sec-label">Auto-Computed Portfolio Allocations — Based on Today's Live 1Y Returns &amp; Volatility</div>
+    <div class="sec-label">AI-Powered Portfolio Strategies — Allocations Recommended by Claude Based on Today's Live Data</div>
 
     <div class="tbl-card" style="background:#1a1810;border-color:#2a2820;padding:18px 20px;margin-bottom:0">
       <div style="overflow-x:auto">
@@ -792,16 +912,14 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
       </table>
       </div>
       <div class="alloc-note">
-        Momentum: rank-weighted by 1Y return (top performers get most weight, negative-return ETFs excluded) ·
-        Risk-Adjusted: weighted by 1Y return ÷ annualised volatility (Sharpe proxy) ·
-        Equal Weight: 1/N benchmark · Recomputed every run from live data.
+        {'  ·  '.join(f'<span style="color:{portfolio_series[p]["color"]}">{p}</span>: {portfolios[p].get("rationale", allocation_desc(portfolios[p]["allocs"]))}' for p in portfolios)}
       </div>
     </div>
 
     <div class="port-chart-card">
       <div class="chart-hdr">
         <div><div class="chart-t" style="color:#f0ece4">10-Year Portfolio Simulation — $10,000 Invested Jan {start_yr}</div>
-        <div class="chart-s" style="color:#6a6660">Annual returns from Yahoo Finance · Allocations are today's auto-computed weights · AUD</div></div>
+        <div class="chart-s" style="color:#6a6660">Annual returns from Yahoo Finance · Allocations recommended by Claude AI from today's live data · AUD</div></div>
         <div class="legend">{port_legend}</div>
       </div>
       <canvas id="portChart" style="max-height:310px"></canvas>
@@ -811,7 +929,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
 </div>
 <footer>
-  <span>Generated {today_str} · Zero hardcoded values · Prices, returns, volatility, allocations all live from Yahoo Finance</span>
+  <span>Generated {today_str} · Zero hardcoded values · Prices, returns, volatility all live from Yahoo Finance · Portfolio strategies powered by Claude AI</span>
   <span>⚠ Not financial advice. Past performance ≠ future results.</span>
 </footer>
 <script>
@@ -936,8 +1054,11 @@ def main():
     print("📡 Fetching live data from Yahoo Finance...")
     etf_data = fetch_all_data(now)
 
-    print("\n⚖️  Auto-computing portfolio allocations from live 1Y returns & volatility...")
-    portfolios = compute_portfolio_allocations(etf_data)
+    print("\n🤖 Generating AI-powered portfolio strategies (Anthropic API)...")
+    portfolios = generate_ai_portfolios(etf_data, now)
+    if portfolios is None:
+        print("  Falling back to algorithmic portfolios...")
+        portfolios = compute_portfolio_allocations(etf_data)
     for pname, pmeta in portfolios.items():
         print(f"  {pname:15s} → {allocation_desc(pmeta['allocs'])}")
 
