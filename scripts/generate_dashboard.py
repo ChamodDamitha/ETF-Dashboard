@@ -10,7 +10,7 @@ DYNAMIC ELEMENTS:
   ✓ 14-month monthly indexed chart
   ✓ Portfolio allocations — auto-weighted daily by 1Y performance rank
   ✓ 10-year portfolio simulation — all returns from Yahoo Finance history
-  ✓ Verdict ratings — rules-based on live metrics
+  ✓ Verdict ratings — AI-powered using live metrics, historical data & news context
 
 PORTFOLIO WEIGHTING STRATEGIES (all auto-computed):
   Momentum   — weighted by rank of 1Y return (best performers get most weight)
@@ -25,8 +25,6 @@ import os
 import smtplib
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
-from email import encoders
-from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -289,7 +287,7 @@ def fetch_ai_news(etf_data, now):
         print("  ⚠ ANTHROPIC_API_KEY not set — skipping AI news section")
         return _fallback_news(etf_data)
 
-    # Build a concise data summary to send to Claude
+    # Build a concise data summary to send to Claude (includes historical returns)
     summary_lines = [f"Date: {now.strftime('%d %B %Y')} (AEST)\n"]
     for ticker, d in etf_data.items():
         price    = f"${d['price']:.2f}"       if d.get('price')    else 'N/A'
@@ -298,15 +296,21 @@ def fetch_ai_news(etf_data, now):
         one_yr   = f"{d['one_yr_ret']:+.1f}%" if d.get('one_yr_ret') else 'N/A'
         frm_high = f"{d['from_high']:+.1f}%"  if d.get('from_high') else 'N/A'
         vol      = f"{d['vol_1y']:.1f}%"      if d.get('vol_1y')   else 'N/A'
+        # Include last 5 years of annual returns for historical context
+        ann = d.get('annual_returns', {})
+        recent_ann = {yr: v for yr, v in ann.items() if int(yr) >= (now.year - 5)}
+        ann_str = ", ".join(f"{yr}:{v:+.1f}%" for yr, v in sorted(recent_ann.items()))
         summary_lines.append(
             f"{ticker} ({d['name']}): "
-            f"price={price}, day={day}, YTD={ytd}, 1Y={one_yr}, from52wHigh={frm_high}, vol={vol}"
+            f"price={price}, day={day}, YTD={ytd}, 1Y={one_yr}, "
+            f"from52wHigh={frm_high}, vol(ann)={vol}, "
+            f"annualReturns=[{ann_str}]"
         )
     data_summary = "\n".join(summary_lines)
 
     prompt = f"""You are a senior market analyst writing a daily ASX ETF briefing for an Australian investor.
 
-Here is today's live ETF data:
+Here is today's live ETF data including multi-year historical returns from Yahoo Finance:
 {data_summary}
 
 Your task: Generate a JSON object with exactly this structure:
@@ -328,6 +332,18 @@ Your task: Generate a JSON object with exactly this structure:
     "QAU": "...",
     "GOLD": "...",
     "VGS": "..."
+  }},
+  "verdicts": {{
+    "IVV": {{
+      "label": "Strong Buy"|"Buy"|"Accumulate"|"Hold"|"Watch",
+      "cls": "buy"|"buy"|"accum"|"hold"|"watch",
+      "note": "1-2 sentence reasoning grounded in the historical returns, current momentum, volatility, distance from 52W high, and the macro news context above (max 25 words)"
+    }},
+    "FANG": {{}},
+    "VAS": {{}},
+    "QAU": {{}},
+    "GOLD": {{}},
+    "VGS": {{}}
   }}
 }}
 
@@ -336,12 +352,14 @@ Rules:
 - Severity: red = high negative risk, amber = mixed/uncertain, green = positive catalyst
 - Insights must reference the actual YTD and 1Y return numbers provided
 - 2 red items, 2 amber items, 2 green items
+- Verdicts MUST be informed by: (a) multi-year historical return pattern, (b) current YTD/1Y momentum, (c) distance from 52-week high, (d) annualised volatility, (e) the macro news themes identified above
+- cls values: "buy" for Strong Buy or Buy, "accum" for Accumulate, "hold" for Hold, "watch" for Watch
 - Return ONLY the JSON object, no preamble, no markdown fences"""
 
     try:
         payload = _json_module.dumps({
             "model": "claude-sonnet-4-20250514",
-            "max_tokens": 1500,
+            "max_tokens": 2000,
             "messages": [{"role": "user", "content": prompt}]
         }).encode("utf-8")
 
@@ -364,7 +382,10 @@ Rules:
             if text.endswith("```"):
                 text = "\n".join(text.split("\n")[:-1])
             result = _json_module.loads(text)
-            print(f"  ✓ AI news generated ({len(result.get('news', []))} items, {len(result.get('insights', {}))} insights)")
+            n_news     = len(result.get('news', []))
+            n_insights = len(result.get('insights', {}))
+            n_verdicts = len(result.get('verdicts', {}))
+            print(f"  ✓ AI content generated ({n_news} news, {n_insights} insights, {n_verdicts} verdicts)")
             return result
     except Exception as e:
         print(f"  ⚠ AI news fetch failed: {e} — using fallback")
@@ -372,19 +393,25 @@ Rules:
 
 
 def _fallback_news(etf_data):
-    """Minimal fallback if Anthropic API unavailable."""
+    """Minimal fallback if Anthropic API unavailable — uses rule-based verdicts."""
     news = [
         {"severity": "amber", "tag": "Markets", "headline": "Live market data loaded — AI news unavailable",
          "body": "Set the ANTHROPIC_API_KEY secret in GitHub to enable AI-generated daily news and ETF insights.",
          "impact": "Add ANTHROPIC_API_KEY to your GitHub repo secrets to enable this section."},
     ]
     insights = {t: f"{t}: Add ANTHROPIC_API_KEY to GitHub secrets to enable AI-generated insights for each ETF." for t in etf_data}
-    return {"news": news, "insights": insights}
+    # Generate rule-based verdicts as fallback
+    verdicts = {}
+    for ticker, d in etf_data.items():
+        label, cls, note = _compute_verdict_rules(d.get("ytd_ret"), d.get("one_yr_ret"), d.get("from_high"))
+        verdicts[ticker] = {"label": label, "cls": cls, "note": note}
+    return {"news": news, "insights": insights, "verdicts": verdicts}
 
 
-# ── Verdict engine — rules-based on live metrics ─────────────────────────────
+# ── Verdict engine ────────────────────────────────────────────────────────────
 
-def compute_verdict(ytd, one_yr, from_high):
+def _compute_verdict_rules(ytd, one_yr, from_high):
+    """Fallback rules-based verdict when AI is unavailable."""
     ytd = ytd or 0; one_yr = one_yr or 0; from_high = from_high or 0
     if ytd > 3 and from_high > -2:
         return "Strong Buy", "buy",   f"+{ytd:.1f}% YTD near highs. Core holding."
@@ -395,6 +422,25 @@ def compute_verdict(ytd, one_yr, from_high):
     if -10 <= ytd <= 3:
         return "Hold",       "hold",  f"YTD {ytd:+.1f}%. Hold and monitor."
     return "Watch",          "watch", f"Down {ytd:.1f}% YTD. High risk."
+
+
+def _get_verdict(ticker, d, ai_verdicts):
+    """
+    Returns (label, cls, note) for a ticker.
+    Uses AI-generated verdict if available; falls back to rules-based logic.
+    """
+    _cls_map = {
+        "Strong Buy": "buy", "Buy": "buy",
+        "Accumulate": "accum", "Hold": "hold", "Watch": "watch",
+    }
+    if ai_verdicts:
+        v = ai_verdicts.get(ticker)
+        if v and v.get("label"):
+            label = v["label"]
+            cls   = v.get("cls") or _cls_map.get(label, "hold")
+            note  = v.get("note", "")
+            return label, cls, note
+    return _compute_verdict_rules(d.get("ytd_ret"), d.get("one_yr_ret"), d.get("from_high"))
 
 
 # ── Formatters ───────────────────────────────────────────────────────────────
@@ -415,6 +461,9 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
     today     = now.date()
     today_str = now.strftime("%d %B %Y, %I:%M %p AEST")
     start_yr  = today.year - 10
+
+    # Extract AI verdicts early so they're available for cards and verdict rows
+    ai_verdicts = (ai_content or {}).get("verdicts", {})
 
     # Build month labels for the 14-month chart
     month_labels = [
@@ -442,7 +491,7 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
         ytd    = d.get("ytd_ret");  one_yr = d.get("one_yr_ret");  fh = d.get("from_high")
         dchg   = d.get("day_chg")
         day_s  = f"{arrow(dchg)} {abs(dchg):.2f}% today" if dchg is not None else "— today"
-        _, v_cls, v_note = compute_verdict(ytd, one_yr, fh)
+        _, v_cls, v_note = _get_verdict(ticker, d, ai_verdicts)
         # Show 1Y rank badge
         all_1y    = [(t, etf_data[t].get("one_yr_ret") or 0) for t in tickers]
         rank      = sorted(all_1y, key=lambda x: -x[1]).index((ticker, one_yr or 0)) + 1
@@ -469,9 +518,10 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
 
     # Verdict row
     verdicts_html = ""
+    verdict_source = "AI-Powered" if ai_verdicts else "Rules-Based"
     for ticker in tickers:
         d = etf_data[ticker]
-        v_label, v_cls, v_note = compute_verdict(d.get("ytd_ret"), d.get("one_yr_ret"), d.get("from_high"))
+        v_label, v_cls, v_note = _get_verdict(ticker, d, ai_verdicts)
         verdicts_html += f"""
     <div class="vc">
       <div class="vt" style="color:{d['color']}">{ticker}</div>
@@ -532,7 +582,7 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
     etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{TICKERS[t]["color"]}"></div>{t}</div>' for t in tickers)
     port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:#c8c4bc">{p}</span></div>' for p in portfolios)
 
-    # ── AI News section ───────────────────────────────────────────────────────
+    # ── AI content: news, insights ───────────────────────────────────────────
     news_items  = (ai_content or {}).get("news", [])
     insights    = (ai_content or {}).get("insights", {})
 
@@ -718,7 +768,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
     </div>
   </div>
 
-  <div class="sec-label">Verdict — Rules-Based on Today's Live Metrics</div>
+  <div class="sec-label">Verdict — {verdict_source} · Live Yahoo Finance Data + News Context</div>
   <div class="verdict-row">{verdicts_html}</div>
 
   <div class="dark">
@@ -791,25 +841,89 @@ new Chart(document.getElementById('portChart').getContext('2d'),{{
 
 # ── Email ────────────────────────────────────────────────────────────────────
 
-def send_email(html, recipient, now):
+def send_email(recipient, now, dashboard_url):
+    """
+    Sends a notification email with a clickable link to the hosted dashboard.
+    No attachment — the link opens directly in the browser.
+    """
     sender   = os.environ["EMAIL_SENDER"]
     password = os.environ["EMAIL_APP_PASSWORD"]
-    msg = MIMEMultipart("mixed")
-    msg["From"] = sender; msg["To"] = recipient
-    msg["Subject"] = f"📊 ASX ETF Dashboard — {now.strftime('%d %b %Y')}"
-    alt = MIMEMultipart("alternative")
-    alt.attach(MIMEText("Your daily ASX ETF dashboard is attached.", "plain"))
-    alt.attach(MIMEText(html, "html"))
-    msg.attach(alt)
-    part = MIMEBase("application", "octet-stream")
-    part.set_payload(html.encode("utf-8"))
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f'attachment; filename="etf-dashboard-{now.strftime("%Y-%m-%d")}.html"')
-    msg.attach(part)
+
+    date_str = now.strftime("%d %b %Y")
+    time_str = now.strftime("%I:%M %p AEST")
+
+    # Plain-text fallback
+    plain = (
+        f"ASX ETF Dashboard — {date_str}\n\n"
+        f"Your daily ETF Dashboard is ready.\n\n"
+        f"View it here: {dashboard_url}\n\n"
+        f"Generated {date_str} at {time_str}.\n"
+        f"Not financial advice. Past performance does not guarantee future results."
+    )
+
+    # HTML notification email — no attachment, just the link
+    html_email = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASX ETF Dashboard — {date_str}</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f1e8;font-family:'Courier New',Courier,monospace;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f1e8;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #dedad0;border-radius:4px;overflow:hidden;">
+        <!-- Header bar -->
+        <tr><td style="background:#1c1916;padding:22px 32px;">
+          <div style="font-size:22px;font-weight:900;color:#f4f1e8;letter-spacing:-1px;">ASX <span style="color:#c8440a;font-style:italic;">ETF</span> Pulse</div>
+          <div style="font-size:10px;color:#6a6660;letter-spacing:2px;margin-top:4px;text-transform:uppercase;">Daily Dashboard · {date_str}</div>
+        </td></tr>
+        <!-- Body -->
+        <tr><td style="padding:32px 32px 24px;">
+          <p style="margin:0 0 16px;font-size:13px;color:#5a5650;line-height:1.7;">
+            Your daily ASX ETF Dashboard is ready — AI-powered verdicts, live Yahoo Finance data, macro news, and portfolio simulations.
+          </p>
+          <p style="margin:0 0 28px;font-size:11px;color:#9a9690;line-height:1.6;">
+            Generated {date_str} at {time_str} · IVV · FANG · VAS · QAU · GOLD · VGS
+          </p>
+          <!-- CTA Button -->
+          <table cellpadding="0" cellspacing="0" width="100%">
+            <tr><td align="center">
+              <a href="{dashboard_url}"
+                 style="display:inline-block;background:#1c1916;color:#f4f1e8;text-decoration:none;
+                        padding:14px 40px;border-radius:3px;font-size:11px;font-weight:500;
+                        letter-spacing:2px;text-transform:uppercase;">
+                View Dashboard &rarr;
+              </a>
+            </td></tr>
+          </table>
+          <p style="margin:20px 0 0;font-size:10px;color:#bab6ae;text-align:center;">
+            Or copy this link: <a href="{dashboard_url}" style="color:#c8440a;word-break:break-all;">{dashboard_url}</a>
+          </p>
+        </td></tr>
+        <!-- Footer -->
+        <tr><td style="border-top:1px solid #ebe8de;padding:14px 32px;">
+          <p style="margin:0;font-size:9px;color:#bab6ae;text-align:center;">
+            Not financial advice &nbsp;·&nbsp; Past performance does not guarantee future results
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+    msg = MIMEMultipart("alternative")
+    msg["From"]    = sender
+    msg["To"]      = recipient
+    msg["Subject"] = f"ASX ETF Dashboard — {date_str}"
+    msg.attach(MIMEText(plain,      "plain"))
+    msg.attach(MIMEText(html_email, "html"))
+
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as srv:
         srv.login(sender, password)
         srv.sendmail(sender, recipient, msg.as_string())
-    print(f"  ✓ Sent to {recipient}")
+    print(f"  ✓ Sent to {recipient} (link: {dashboard_url})")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -846,8 +960,11 @@ def main():
     print(f"  ✓ Saved → {fname.name}")
 
     print("\n📧 Sending email...")
-    recipient = os.environ["EMAIL_RECIPIENT"] or os.environ["EMAIL_SENDER"]
-    send_email(html, recipient, now)
+    recipient     = os.environ.get("EMAIL_RECIPIENT") or os.environ["EMAIL_SENDER"]
+    dashboard_url = os.environ.get("DASHBOARD_URL", "")
+    if not dashboard_url:
+        print("  ⚠ DASHBOARD_URL not set — link in email will be empty")
+    send_email(recipient, now, dashboard_url)
     print("\n✅ Done.\n")
 
 

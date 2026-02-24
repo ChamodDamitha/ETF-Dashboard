@@ -8,6 +8,9 @@ on:
   # Also allow manual trigger from GitHub Actions UI
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to push to gh-pages branch
+
 jobs:
   generate-and-send:
     runs-on: ubuntu-latest
@@ -29,16 +32,29 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. Generate dashboard & send email ───────────────────────────────────
+      # ── 4. Generate dashboard & send email with hosted link ───────────────────
       - name: Generate dashboard and send email
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # GitHub Pages URL — the email will link here instead of sending an attachment
+          DASHBOARD_URL: "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/latest.html"
         run: python scripts/generate_dashboard.py
 
-      # ── 5. Upload dashboard as workflow artifact (viewable in Actions UI) ─────
+      # ── 5. Deploy dashboard to GitHub Pages (creates/updates gh-pages branch) ─
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./output
+          keep_files: false
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
+          commit_message: "chore: update dashboard ${{ github.run_number }}"
+
+      # ── 6. Upload dashboard as workflow artifact (viewable in Actions UI) ─────
       - name: Upload dashboard artifact
         uses: actions/upload-artifact@v4
         if: always()
