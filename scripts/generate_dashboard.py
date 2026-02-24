@@ -120,11 +120,13 @@ def fetch_all_data(now):
     Fetches everything from Yahoo Finance in a single history pull per ticker.
     Returns a dict keyed by ticker with all computed metrics.
     """
-    today         = now.date()
-    start_of_year = date(today.year, 1, 1)
-    ten_years_ago = date(today.year - 10, 1, 1)
-    one_year_ago  = today - relativedelta(years=1)
-    fourteen_mo   = today - relativedelta(months=14)
+    today          = now.date()
+    start_of_year  = date(today.year, 1, 1)
+    twenty_years_ago = date(today.year - 20, 1, 1)
+    ten_years_ago  = date(today.year - 10, 1, 1)
+    five_years_ago = today - relativedelta(years=5)
+    one_year_ago   = today - relativedelta(years=1)
+    fourteen_mo    = today - relativedelta(months=14)
 
     result = {}
 
@@ -149,8 +151,8 @@ def fetch_all_data(now):
             mer       = info.get("annualReportExpenseRatio") or info.get("expenseRatio")
             div_yield = info.get("yield") or info.get("trailingAnnualDividendYield")
 
-            # ── Pull full 10-year daily history in one request ───────────────
-            hist  = t.history(start=str(ten_years_ago), end=str(today), auto_adjust=True)
+            # ── Pull up to 20-year daily history in one request ──────────────
+            hist  = t.history(start=str(twenty_years_ago), end=str(today), auto_adjust=True)
             close = hist["Close"] if not hist.empty else None
 
             # YTD return
@@ -166,6 +168,16 @@ def fetch_all_data(now):
                 sl = close[close.index.date >= one_year_ago]
                 if len(sl) > 1:
                     one_yr_ret = (sl.iloc[-1] / sl.iloc[0] - 1) * 100
+
+            # 5-year, 10-year, 20-year total returns
+            def _period_ret(cl, since):
+                if cl is None: return None
+                sl = cl[cl.index.date >= since]
+                return (sl.iloc[-1] / sl.iloc[0] - 1) * 100 if len(sl) > 1 else None
+
+            five_yr_ret   = _period_ret(close, five_years_ago)
+            ten_yr_ret    = _period_ret(close, ten_years_ago)
+            twenty_yr_ret = _period_ret(close, twenty_years_ago)
 
             # 1-year daily volatility (annualised) — used for risk-adjusted weighting
             vol_1y = None
@@ -206,6 +218,9 @@ def fetch_all_data(now):
                 "day_chg":         day_chg,
                 "ytd_ret":         ytd_ret,
                 "one_yr_ret":      one_yr_ret,
+                "five_yr_ret":     five_yr_ret,
+                "ten_yr_ret":      ten_yr_ret,
+                "twenty_yr_ret":   twenty_yr_ret,
                 "vol_1y":          vol_1y,
                 "w52_high":        w52_high,
                 "w52_low":         w52_low,
@@ -217,9 +232,11 @@ def fetch_all_data(now):
                 "monthly_indexed": monthly_indexed,
             }
             parts = [f"${price:.2f}" if price else "no price"]
-            if ytd_ret is not None:  parts.append(f"YTD:{ytd_ret:+.1f}%")
+            if ytd_ret is not None:    parts.append(f"YTD:{ytd_ret:+.1f}%")
             if one_yr_ret is not None: parts.append(f"1Y:{one_yr_ret:+.1f}%")
-            if vol_1y is not None:  parts.append(f"vol:{vol_1y:.1f}%")
+            if five_yr_ret is not None:  parts.append(f"5Y:{five_yr_ret:+.1f}%")
+            if ten_yr_ret is not None:   parts.append(f"10Y:{ten_yr_ret:+.1f}%")
+            if vol_1y is not None:     parts.append(f"vol:{vol_1y:.1f}%")
             print("  ".join(parts))
 
         except Exception as exc:
@@ -228,6 +245,7 @@ def fetch_all_data(now):
                 **meta, "price": None, "error": str(exc),
                 "annual_returns": {}, "monthly_indexed": [],
                 "one_yr_ret": None, "ytd_ret": None, "vol_1y": None,
+                "five_yr_ret": None, "ten_yr_ret": None, "twenty_yr_ret": None,
             }
 
     return result
@@ -657,9 +675,12 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
     # Price cards
     cards_html = ""
     for ticker in tickers:
-        d      = etf_data[ticker]
-        ytd    = d.get("ytd_ret");  one_yr = d.get("one_yr_ret");  fh = d.get("from_high")
-        dchg   = d.get("day_chg")
+        d        = etf_data[ticker]
+        ytd      = d.get("ytd_ret");  one_yr = d.get("one_yr_ret");  fh = d.get("from_high")
+        five_yr  = d.get("five_yr_ret")
+        ten_yr   = d.get("ten_yr_ret")
+        twenty_yr = d.get("twenty_yr_ret")
+        dchg     = d.get("day_chg")
         day_s  = f"{arrow(dchg)} {abs(dchg):.2f}% today" if dchg is not None else "— today"
         _, v_cls, v_note = _get_verdict(ticker, d, ai_verdicts)
         # Show 1Y rank badge
@@ -679,6 +700,9 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
       <div class="pr"><span class="pl">52W LOW</span><span class="pv">{fp(d.get('w52_low'))}</span></div>
       <div class="pr"><span class="pl">FROM HIGH</span><span class="pv {ccls(fh)}">{fpct(fh)}</span></div>
       <div class="pr"><span class="pl">1Y RETURN</span><span class="pv {ccls(one_yr)}">{fpct(one_yr)}</span></div>
+      <div class="pr"><span class="pl">5Y RETURN</span><span class="pv {ccls(five_yr)}">{fpct(five_yr)}</span></div>
+      <div class="pr"><span class="pl">10Y RETURN</span><span class="pv {ccls(ten_yr)}">{fpct(ten_yr)}</span></div>
+      <div class="pr"><span class="pl">20Y RETURN</span><span class="pv {ccls(twenty_yr)}">{fpct(twenty_yr)}</span></div>
       <div class="pr"><span class="pl">YTD</span><span class="pv {ccls(ytd)}">{fpct(ytd)}</span></div>
       <div class="pr"><span class="pl">VOL (1Y)</span><span class="pv">{f"{d['vol_1y']:.1f}%" if d.get('vol_1y') else 'N/A'}</span></div>
       <div class="pr"><span class="pl">MER</span><span class="pv">{fmer(d.get('mer'))}</span></div>
