@@ -1,0 +1,47 @@
+name: Daily ASX ETF Dashboard
+
+on:
+  # Run every weekday at 8:00 AM AEST (= 22:00 UTC previous day)
+  schedule:
+    - cron: "0 22 * * 0-4"   # Sun–Thu UTC = Mon–Fri AEST
+
+  # Also allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  generate-and-send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # ── 1. Checkout repo ──────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ──────────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # ── 3. Install dependencies ───────────────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Generate dashboard & send email ───────────────────────────────────
+      - name: Generate dashboard and send email
+        env:
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: python scripts/generate_dashboard.py
+
+      # ── 5. Upload dashboard as workflow artifact (viewable in Actions UI) ─────
+      - name: Upload dashboard artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: etf-dashboard-${{ github.run_number }}
+          path: output/latest.html
+          retention-days: 30
