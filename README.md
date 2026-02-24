@@ -1,109 +1,124 @@
-# 📊 ASX ETF Daily Dashboard — GitHub Actions Automation
+# 📊 ASX ETF Daily Dashboard — Fully Dynamic · GitHub Actions
 
-Automatically generates and emails a live ASX ETF dashboard every weekday at **8:00 AM AEST**.
-
+Emails a live ASX ETF dashboard every weekday at **8:00 AM AEST**.
 Covers: **IVV · FANG · VAS · QAU · NDQ · VGS**
 
----
-
-## What it does
-
-Every weekday morning the workflow:
-1. Fetches **live prices** for all 6 ETFs from Yahoo Finance (free, no API key needed)
-2. Generates a **self-contained HTML dashboard** with charts, performance data, and 10-year portfolio simulation
-3. **Emails it to you** as both inline HTML and a downloadable attachment
-4. Saves it as a **GitHub Actions artifact** (viewable in the Actions tab for 30 days)
+> **Zero hardcoded data.** Every number on the dashboard — prices, returns,
+> volatility, allocations, and all 10 years of portfolio simulation — is
+> computed fresh from Yahoo Finance on the day the workflow runs.
 
 ---
 
-## Setup — 5 Steps
+## What's dynamic
 
-### Step 1 — Fork or create the repo
+| Element | How it's computed |
+|---------|-------------------|
+| Current price, day change | Live from `yfinance` info API |
+| 52W high / low, distance from high | Live from `yfinance` info API |
+| YTD return | Jan 1 → today from daily close history |
+| 1-year return | 365 days ago → today from daily close history |
+| Annualised volatility | Std dev of daily returns × √252, past 12 months |
+| AUM, MER, dividend yield | Live from `yfinance` info API |
+| Annual returns table | Year-by-year from 10 years of daily history |
+| 14-month line chart | Monthly closes, indexed to 100 |
+| **Portfolio allocations** | **Auto-computed today from live 1Y returns & volatility** |
+| 10-year simulation | Compounded using live annual returns + live allocations |
+| Verdict ratings | Rules engine on live YTD / 1Y return / distance from high |
 
-Create a new **private** GitHub repository and push these files to it:
+---
+
+## Portfolio strategies (all auto-weighted daily)
+
+**Momentum** — Rank ETFs by 1Y return. Best performer gets the highest weight (rank 6 of 6 points down to rank 1). Any ETF with a negative 1Y return is excluded (0% weight). Remaining weights normalised to 100%.
+
+**Risk-Adjusted** — Weight proportional to `1Y return ÷ annualised volatility` (Sharpe proxy). Rewards high-return, low-vol ETFs. Negative ratios = 0% weight.
+
+**Equal Weight** — 1/N across all ETFs. Used as a benchmark to see whether the active strategies add value.
+
+Allocations are printed in the terminal on each run and displayed as a table in the dashboard.
+
+---
+
+## Project structure
 
 ```
 your-repo/
 ├── .github/
 │   └── workflows/
-│       └── daily-dashboard.yml
+│       └── daily-dashboard.yml   ← Schedule & GitHub Actions config
 ├── scripts/
-│   └── generate_dashboard.py
+│   └── generate_dashboard.py     ← All logic: fetch → compute → render → email
+├── output/                       ← Auto-created at runtime; gitignored
+│   ├── latest.html
+│   └── etf-dashboard-YYYY-MM-DD.html
 ├── requirements.txt
+├── .gitignore
 └── README.md
 ```
 
-### Step 2 — Enable a Gmail App Password
+---
 
-The script sends email via Gmail SMTP. You need an **App Password** (not your regular Gmail password).
+## Setup — 5 Steps
 
-1. Go to your Google Account → **Security**
-2. Enable **2-Step Verification** if not already on
-3. Go to **Security → App Passwords**
-4. Create a new app password — name it "ETF Dashboard"
-5. Copy the 16-character password (e.g. `abcd efgh ijkl mnop`)
+### Step 1 — Create a private GitHub repo
 
-> ⚠️ Use a dedicated Gmail account for sending, not your personal one.
+```bash
+git init
+git remote add origin https://github.com/YOUR_USERNAME/etf-dashboard.git
+git add .
+git commit -m "init"
+git push -u origin main
+```
+
+### Step 2 — Get a Gmail App Password
+
+1. [myaccount.google.com](https://myaccount.google.com) → Security → **App Passwords**
+2. Create one named "ETF Dashboard"
+3. Copy the 16-character password
 
 ### Step 3 — Add GitHub Secrets
 
-In your GitHub repo, go to **Settings → Secrets and variables → Actions → New repository secret** and add:
+**Settings → Secrets and variables → Actions → New repository secret**
 
-| Secret Name         | Value                                      |
-|---------------------|--------------------------------------------|
-| `EMAIL_SENDER`      | Your Gmail address (e.g. `you@gmail.com`)  |
-| `EMAIL_APP_PASSWORD`| The 16-char App Password from Step 2       |
-| `EMAIL_RECIPIENT`   | Where to send the dashboard (can be same)  |
+| Secret | Value |
+|--------|-------|
+| `EMAIL_SENDER` | Gmail address to send from |
+| `EMAIL_APP_PASSWORD` | 16-char App Password |
+| `EMAIL_RECIPIENT` | Where to receive the report |
 
-### Step 4 — Push and test
+### Step 4 — Test manually
 
-1. Push all files to your repo
-2. Go to **Actions** tab in GitHub
-3. Click **"Daily ASX ETF Dashboard"** workflow
-4. Click **"Run workflow"** → **"Run workflow"** (manual trigger)
-5. Watch it run — check your inbox in ~60 seconds ✉️
+Actions tab → **Daily ASX ETF Dashboard** → **Run workflow** → check your inbox in ~90 seconds.
 
-### Step 5 — Confirm the schedule
+### Step 5 — It runs itself
 
-The workflow runs automatically at these times:
-
-| AEST (Sydney)      | UTC                  |
-|--------------------|----------------------|
-| Mon–Fri 8:00 AM    | Sun–Thu 10:00 PM     |
-
-To change the time, edit the `cron` line in `.github/workflows/daily-dashboard.yml`:
-```yaml
-- cron: "0 22 * * 0-4"   # 10pm UTC Sun-Thu = 8am AEST Mon-Fri
-```
-
-Use [crontab.guru](https://crontab.guru) to calculate cron times.
+Every weekday at 8:00 AM AEST automatically, for free.
 
 ---
 
 ## Customisation
 
-### Change ETFs
-Edit `TICKERS` in `scripts/generate_dashboard.py`. Any Yahoo Finance ticker works.
+### Add or swap ETFs
 ```python
 TICKERS = {
-    "IVV": {"yahoo": "IVV.AX", "name": "...", "color": "#c8440a", "cls": "ivv"},
+    "VHY": {"yahoo": "VHY.AX", "name": "Vanguard High Yield ETF", "color": "#2a6a3a", "cls": "vhy"},
     ...
 }
 ```
+The portfolio allocations, charts, and simulation will automatically include the new ticker.
 
-### Change portfolio allocations
-Edit `PORTFOLIOS` in the same file:
+### Change the portfolio weighting logic
+Edit `compute_portfolio_allocations()` in `generate_dashboard.py`. The function receives the full `etf_data` dict with all live metrics and returns `{ strategy_name: { ticker: weight } }`.
+
+### Change the starting capital
 ```python
-PORTFOLIOS = {
-    "Conservative": {
-        "allocs": {"VAS": 0.55, "QAU": 0.20, "VGS": 0.25},
-        ...
-    },
-}
+INITIAL = 50_000.0
 ```
 
-### Change email send time
-Modify the cron schedule in `.github/workflows/daily-dashboard.yml`.
+### Change the lookback window
+```python
+ten_years_ago = date(today.year - 7, 1, 1)  # 7 years instead of 10
+```
 
 ---
 
@@ -111,24 +126,13 @@ Modify the cron schedule in `.github/workflows/daily-dashboard.yml`.
 
 | Problem | Fix |
 |---------|-----|
-| Email not arriving | Check spam folder. Verify App Password is correct in Secrets. |
-| Workflow fails | Check the Actions log. yfinance sometimes has brief outages — re-run manually. |
-| Prices show N/A | Yahoo Finance rate-limits occasionally. The script will retry on next run. |
-| Wrong timezone | The cron runs in UTC. Adjust the cron expression for your timezone. |
+| Prices show N/A | Yahoo Finance rate-limits occasionally. Re-run manually or wait for next day. |
+| Allocations sum ≠ 100% | Can happen if all ETFs have negative 1Y returns (weights normalised; rare). |
+| Email goes to spam | Add the sender address to your contacts. |
+| Wrong time | Cron runs in UTC — use [crontab.guru](https://crontab.guru) to recalculate. |
 
 ---
 
 ## Cost
 
-**Completely free.** GitHub Actions provides 2,000 minutes/month on free accounts. This workflow uses ~2 minutes per run × 5 days/week × 4 weeks = ~40 minutes/month.
-
----
-
-## Files
-
-```
-.github/workflows/daily-dashboard.yml   — Schedule & Actions config
-scripts/generate_dashboard.py           — Main Python script
-requirements.txt                        — Python dependencies
-output/                                 — Generated dashboards (auto-created)
-```
+Free. ~40 of GitHub's 2,000 free minutes/month.
