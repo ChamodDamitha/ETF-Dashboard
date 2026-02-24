@@ -34,8 +34,10 @@ import urllib.request
 import numpy as np
 import yfinance as yf
 
-AEST = ZoneInfo("Australia/Sydney")
-INITIAL = 10_000.0
+AEST           = ZoneInfo("Australia/Sydney")
+INITIAL        = 10_000.0
+RISK_FREE_RATE = 4.0   # % p.a. — RBA cash rate proxy for Sharpe/Sortino
+SNAPSHOT_PATH  = Path(__file__).parent.parent / "data" / "last_run.json"
 
 # ── Only static config: ticker identifiers and display metadata ──────────────
 # NO prices, NO returns, NO weights — all fetched/computed live
@@ -101,7 +103,8 @@ def discover_top_etfs(now, n=3):
             continue
 
     results.sort(key=lambda x: -x[2])
-    top = results[:n]
+    top      = results[:n]
+    rejected = results[n:]   # candidates screened but not added this run
 
     discovered = {}
     for i, (ticker, meta, one_yr) in enumerate(top):
@@ -110,7 +113,13 @@ def discover_top_etfs(now, n=3):
         discovered[ticker] = {**meta, "color": color, "cls": cls}
         print(f"  [{ticker}] discovered — 1Y {one_yr:+.1f}%  ({meta['name']})")
 
-    return discovered
+    # Build screened-pool table data (ticker → {name, one_yr_ret})
+    screened_pool = {
+        t: {"name": meta["name"], "one_yr_ret": ret}
+        for t, meta, ret in rejected
+    }
+
+    return discovered, screened_pool
 
 
 # ── STEP 1: Fetch all live data ───────────────────────────────────────────────
@@ -181,11 +190,44 @@ def fetch_all_data(now):
 
             # 1-year daily volatility (annualised) — used for risk-adjusted weighting
             vol_1y = None
+            daily_rets_1y = []
             if close is not None:
                 sl = close[close.index.date >= one_year_ago]
                 if len(sl) > 20:
-                    daily_rets = sl.pct_change().dropna()
-                    vol_1y = float(daily_rets.std() * np.sqrt(252) * 100)  # % annualised
+                    dr = sl.pct_change().dropna()
+                    vol_1y        = float(dr.std() * np.sqrt(252) * 100)
+                    daily_rets_1y = dr.tolist()
+
+            # Sharpe & Sortino ratios (1Y, risk-free = RISK_FREE_RATE %)
+            sharpe_1y  = None
+            sortino_1y = None
+            if one_yr_ret is not None and vol_1y and vol_1y > 0:
+                sharpe_1y = round((one_yr_ret - RISK_FREE_RATE) / vol_1y, 2)
+            if one_yr_ret is not None and daily_rets_1y:
+                neg = [r for r in daily_rets_1y if r < 0]
+                if len(neg) > 5:
+                    dv = float(np.std(neg) * np.sqrt(252) * 100)
+                    if dv > 0:
+                        sortino_1y = round((one_yr_ret - RISK_FREE_RATE) / dv, 2)
+
+            # Drawdown: max over full history and current from rolling peak
+            max_drawdown  = None
+            curr_drawdown = None
+            if close is not None and len(close) > 1:
+                roll_max      = close.cummax()
+                dd_series     = (close - roll_max) / roll_max * 100
+                max_drawdown  = round(float(dd_series.min()), 1)
+                curr_drawdown = round(float(dd_series.iloc[-1]), 1)
+
+            # 50-day & 200-day moving averages (for regime detection)
+            ma_50d = ma_200d = is_above_200ma = None
+            if close is not None:
+                if len(close) >= 200:
+                    ma_200d = float(close.rolling(200).mean().iloc[-1])
+                if len(close) >= 50:
+                    ma_50d  = float(close.rolling(50).mean().iloc[-1])
+                if price and ma_200d:
+                    is_above_200ma = price > ma_200d
 
             # Annual returns per full calendar year (start_year → last full year)
             annual_returns = {}
@@ -222,6 +264,14 @@ def fetch_all_data(now):
                 "ten_yr_ret":      ten_yr_ret,
                 "twenty_yr_ret":   twenty_yr_ret,
                 "vol_1y":          vol_1y,
+                "sharpe_1y":       sharpe_1y,
+                "sortino_1y":      sortino_1y,
+                "max_drawdown":    max_drawdown,
+                "curr_drawdown":   curr_drawdown,
+                "ma_50d":          ma_50d,
+                "ma_200d":         ma_200d,
+                "is_above_200ma":  is_above_200ma,
+                "daily_rets_1y":   daily_rets_1y,
                 "w52_high":        w52_high,
                 "w52_low":         w52_low,
                 "from_high":       from_high,
@@ -243,9 +293,12 @@ def fetch_all_data(now):
             print(f"ERROR — {exc}")
             result[ticker] = {
                 **meta, "price": None, "error": str(exc),
-                "annual_returns": {}, "monthly_indexed": [],
+                "annual_returns": {}, "monthly_indexed": [], "daily_rets_1y": [],
                 "one_yr_ret": None, "ytd_ret": None, "vol_1y": None,
                 "five_yr_ret": None, "ten_yr_ret": None, "twenty_yr_ret": None,
+                "sharpe_1y": None, "sortino_1y": None,
+                "max_drawdown": None, "curr_drawdown": None,
+                "ma_50d": None, "ma_200d": None, "is_above_200ma": None,
             }
 
     return result
@@ -351,6 +404,248 @@ def build_portfolio_series(etf_data, portfolios, now):
         }
 
     return result
+
+
+# ── STEP 3a: Analytics — correlations, regime, DCA, benchmarks ───────────────
+
+def compute_correlations(etf_data):
+    """Pairwise Pearson correlations of 1Y daily returns for all active ETFs."""
+    tickers = list(etf_data.keys())
+    series  = {t: etf_data[t].get("daily_rets_1y", []) for t in tickers}
+    valid   = [t for t in tickers if len(series[t]) > 30]
+    matrix  = {}
+    for t1 in valid:
+        matrix[t1] = {}
+        for t2 in valid:
+            if t1 == t2:
+                matrix[t1][t2] = 1.0
+            else:
+                r1 = np.array(series[t1])
+                r2 = np.array(series[t2])
+                n  = min(len(r1), len(r2))
+                corr = float(np.corrcoef(r1[-n:], r2[-n:])[0, 1])
+                matrix[t1][t2] = round(corr, 2)
+    return matrix
+
+
+def detect_market_regime(etf_data):
+    """
+    Bull/bear/mixed regime from the proportion of ETFs above their 200-day MA.
+    Returns (label, color_hex, description).
+    """
+    flagged = [(t, d.get("is_above_200ma")) for t, d in etf_data.items()
+               if d.get("is_above_200ma") is not None]
+    if not flagged:
+        return "unknown", "#9a9690", "Insufficient MA data for regime detection."
+    above = sum(1 for _, f in flagged if f)
+    total = len(flagged)
+    pct   = above / total
+    if pct >= 0.70:
+        return "bull",  "#1a7a4a", f"{above}/{total} ETFs above 200-day MA — broad-based uptrend."
+    if pct <= 0.30:
+        return "bear",  "#c8440a", f"Only {above}/{total} ETFs above 200-day MA — risk-off conditions."
+    return "mixed", "#b8920a", f"{above}/{total} ETFs above 200-day MA — mixed signals, selective exposure."
+
+
+def build_dca_series(etf_data, portfolios, now):
+    """
+    Dollar-cost averaging simulation: $1,000 invested at the start of each
+    calendar year for 10 years (total $10,000 invested, same as lump sum).
+    Returns parallel structure to build_portfolio_series().
+    """
+    today      = now.date()
+    start_year = today.year - 10
+    all_years  = [str(y) for y in range(start_year, today.year + 1)]
+    annual     = INITIAL / 10  # $1,000/year
+
+    result = {}
+    for pname, pmeta in portfolios.items():
+        value  = 0.0
+        values = [0.0]
+        for yr in all_years:
+            value += annual
+            port_ret = sum(
+                (etf_data.get(etf, {}).get("annual_returns", {}).get(yr) or 0) / 100 * w
+                for etf, w in pmeta["allocs"].items()
+            )
+            value *= (1 + port_ret)
+            values.append(round(value, 2))
+
+        elapsed   = today.year - start_year + today.timetuple().tm_yday / 365
+        cagr      = ((value / INITIAL) ** (1 / elapsed) - 1) * 100 if elapsed > 0 else 0
+        total_pct = (value / INITIAL - 1) * 100
+
+        result[pname] = {
+            "values":    values,
+            "final":     round(value, 2),
+            "total_pct": round(total_pct, 1),
+            "cagr":      round(cagr, 1),
+            "color":     pmeta["color"],
+        }
+    return result
+
+
+def fetch_benchmark_series(now):
+    """
+    Fetches 10-year annual returns for ^AXJO (ASX 200) to use as a reference
+    line on the portfolio simulation chart.  Returns a dict shaped like a
+    single portfolio_series entry, or None on failure.
+    """
+    today      = now.date()
+    start_year = today.year - 10
+    start_date = date(start_year, 1, 1)
+    try:
+        hist  = yf.Ticker("^AXJO").history(start=str(start_date), end=str(today), auto_adjust=True)
+        close = hist["Close"] if not hist.empty else None
+        if close is None or len(close) < 50:
+            return None
+
+        # Compute annual returns per year
+        annual_rets = {}
+        for yr in range(start_year, today.year):
+            sl = close[(close.index.date >= date(yr, 1, 1)) & (close.index.date <= date(yr, 12, 31))]
+            if len(sl) > 1:
+                annual_rets[str(yr)] = (sl.iloc[-1] / sl.iloc[0] - 1)
+        # YTD
+        sl_ytd = close[close.index.date >= date(today.year, 1, 1)]
+        if len(sl_ytd) > 1:
+            annual_rets[str(today.year)] = (sl_ytd.iloc[-1] / sl_ytd.iloc[0] - 1)
+
+        # Simulate $10,000 lump sum
+        value  = INITIAL
+        values = [INITIAL]
+        for yr in [str(y) for y in range(start_year, today.year + 1)]:
+            value *= (1 + annual_rets.get(yr, 0))
+            values.append(round(value, 2))
+
+        elapsed   = today.year - start_year + today.timetuple().tm_yday / 365
+        cagr      = ((value / INITIAL) ** (1 / elapsed) - 1) * 100 if elapsed > 0 else 0
+        total_pct = (value / INITIAL - 1) * 100
+        print(f"  ✓ ^AXJO benchmark: ${value:,.0f}  ({total_pct:+.1f}%  CAGR {cagr:.1f}%)")
+        return {"values": values, "final": round(value, 2),
+                "total_pct": round(total_pct, 1), "cagr": round(cagr, 1)}
+    except Exception as e:
+        print(f"  ⚠ Benchmark fetch failed: {e}")
+        return None
+
+
+def compute_equal_weight_drift(etf_data):
+    """
+    Shows how an equal-weight portfolio (1/N at start of year) has drifted
+    given YTD returns.  Returns {ticker: drift_pct} where positive = overweight.
+    """
+    tickers = list(etf_data.keys())
+    n       = len(tickers)
+    if n == 0:
+        return {}
+    target = 1.0 / n
+    # Growth factor for each ETF since Jan 1
+    ytd_factors = {t: 1 + (etf_data[t].get("ytd_ret") or 0) / 100 for t in tickers}
+    total       = sum(ytd_factors.values())
+    current_wt  = {t: ytd_factors[t] / total for t in tickers}
+    return {t: round((current_wt[t] - target) * 100, 1) for t in tickers}
+
+
+# ── Snapshot persistence (for "What Changed" and verdict history) ─────────────
+
+def load_last_snapshot():
+    """Load the previous run's snapshot from data/last_run.json, or {} if absent."""
+    try:
+        if SNAPSHOT_PATH.exists():
+            with open(SNAPSHOT_PATH) as f:
+                return _json_module.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def save_snapshot(etf_data, ai_content, now):
+    """Persist key metrics and verdicts to data/last_run.json for tomorrow's diff."""
+    SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "date": now.strftime("%Y-%m-%d"),
+        "etf_data": {
+            t: {k: d.get(k) for k in
+                ("price", "one_yr_ret", "ytd_ret", "vol_1y", "sharpe_1y",
+                 "sortino_1y", "max_drawdown", "curr_drawdown", "from_high")}
+            for t, d in etf_data.items()
+        },
+        "verdicts": {t: v.get("label") for t, v in
+                     (ai_content or {}).get("verdicts", {}).items()},
+    }
+    with open(SNAPSHOT_PATH, "w") as f:
+        _json_module.dump(payload, f, indent=2)
+
+
+def generate_whatchanged_summary(etf_data, snapshot, ai_content, now):
+    """
+    Calls Claude with a diff of today vs yesterday's metrics and asks for a
+    concise narrative of what materially changed.  Returns an HTML string.
+    Falls back to a plain text diff if the API call fails.
+    """
+    if not snapshot:
+        return ""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return ""
+
+    prev_date  = snapshot.get("date", "previous run")
+    prev_etfs  = snapshot.get("etf_data", {})
+    prev_verd  = snapshot.get("verdicts", {})
+    curr_verd  = {t: v.get("label") for t, v in
+                  (ai_content or {}).get("verdicts", {}).items()}
+
+    diff_lines = [f"Previous run: {prev_date}  →  Today: {now.strftime('%d %b %Y')}\n"]
+    for t, d in etf_data.items():
+        p = prev_etfs.get(t, {})
+        parts = []
+        for key, label in [("price", "price"), ("one_yr_ret", "1Y"), ("ytd_ret", "YTD"),
+                            ("sharpe_1y", "Sharpe"), ("curr_drawdown", "drawdown")]:
+            cur = d.get(key)
+            prv = p.get(key)
+            if cur is not None and prv is not None:
+                delta = cur - prv
+                if abs(delta) > 0.1:
+                    parts.append(f"{label}: {prv:+.2f}→{cur:+.2f} (Δ{delta:+.2f})")
+        vd_change = ""
+        if prev_verd.get(t) and curr_verd.get(t) and prev_verd[t] != curr_verd[t]:
+            vd_change = f"  verdict: {prev_verd[t]}→{curr_verd[t]}"
+        if parts or vd_change:
+            diff_lines.append(f"{t}: {', '.join(parts)}{vd_change}")
+
+    if len(diff_lines) <= 1:
+        return ""
+    diff_text = "\n".join(diff_lines)
+
+    prompt = f"""You are writing a concise daily briefing for an Australian ETF investor.
+
+Here are the changes from the previous trading day:
+{diff_text}
+
+Write a single short paragraph (3-5 sentences, max 80 words) summarising what materially changed.
+Highlight any verdict upgrades/downgrades, meaningful price moves, and trend shifts.
+Be specific: mention ticker names and numbers. Do not use markdown. Plain prose only."""
+
+    try:
+        payload = _json_module.dumps({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 200,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages", data=payload,
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw  = _json_module.loads(resp.read().decode())
+            text = raw["content"][0]["text"].strip()
+            print(f"  ✓ What-changed summary generated ({len(text)} chars)")
+            return text
+    except Exception as e:
+        print(f"  ⚠ What-changed summary failed: {e}")
+        return ""
 
 
 # ── STEP 3b: AI-generated portfolio strategies via Anthropic API ──────────────
@@ -476,7 +771,7 @@ Rules:
 
 # ── STEP 4: AI-generated news & insights via Anthropic API ───────────────────
 
-def fetch_ai_news(etf_data, now):
+def fetch_ai_news(etf_data, now, regime=None):
     """
     Calls the Anthropic API with today's live ETF metrics and asks Claude to:
     1. Identify 6 current macro/geopolitical news themes affecting these ETFs
@@ -484,13 +779,16 @@ def fetch_ai_news(etf_data, now):
     Returns: { "news": [...6 cards...], "insights": {ticker: text} }
     Falls back to placeholder text if API key missing or call fails.
     """
-    api_key = os.environ["ANTHROPIC_API_KEY"]
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         print("  ⚠ ANTHROPIC_API_KEY not set — skipping AI news section")
         return _fallback_news(etf_data)
 
     # Build a concise data summary to send to Claude (includes historical returns)
     summary_lines = [f"Date: {now.strftime('%d %B %Y')} (AEST)\n"]
+    if regime:
+        rlabel, _, rdesc = regime
+        summary_lines.append(f"Market regime: {rlabel.upper()} — {rdesc}\n")
     for ticker, d in etf_data.items():
         price    = f"${d['price']:.2f}"       if d.get('price')    else 'N/A'
         day      = f"{d['day_chg']:+.2f}%"    if d.get('day_chg')  else 'N/A'
@@ -498,6 +796,9 @@ def fetch_ai_news(etf_data, now):
         one_yr   = f"{d['one_yr_ret']:+.1f}%" if d.get('one_yr_ret') else 'N/A'
         frm_high = f"{d['from_high']:+.1f}%"  if d.get('from_high') else 'N/A'
         vol      = f"{d['vol_1y']:.1f}%"      if d.get('vol_1y')   else 'N/A'
+        sharpe   = f"{d['sharpe_1y']:.2f}"    if d.get('sharpe_1y') is not None else 'N/A'
+        drawdn   = f"{d['curr_drawdown']:+.1f}%" if d.get('curr_drawdown') is not None else 'N/A'
+        ma_sig   = ("above" if d.get("is_above_200ma") else "below") if d.get("is_above_200ma") is not None else "N/A"
         # Include last 5 years of annual returns for historical context
         ann = d.get('annual_returns', {})
         recent_ann = {yr: v for yr, v in ann.items() if int(yr) >= (now.year - 5)}
@@ -505,8 +806,8 @@ def fetch_ai_news(etf_data, now):
         summary_lines.append(
             f"{ticker} ({d['name']}): "
             f"price={price}, day={day}, YTD={ytd}, 1Y={one_yr}, "
-            f"from52wHigh={frm_high}, vol(ann)={vol}, "
-            f"annualReturns=[{ann_str}]"
+            f"from52wHigh={frm_high}, vol={vol}, Sharpe={sharpe}, "
+            f"drawdown={drawdn}, 200dMA={ma_sig}, annualReturns=[{ann_str}]"
         )
     data_summary = "\n".join(summary_lines)
 
@@ -644,7 +945,10 @@ def arrow(v): return "▲" if (v or 0) > 0 else "▼"
 
 # ── HTML generation ──────────────────────────────────────────────────────────
 
-def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
+def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
+                  correlations=None, regime=None, dca_series=None,
+                  what_changed=None, snapshot=None, benchmark_series=None,
+                  screened_pool=None, eq_drift=None):
     tickers   = list(etf_data.keys())
     today     = now.date()
     today_str = now.strftime("%d %B %Y, %I:%M %p AEST")
@@ -672,25 +976,40 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
         )
         table_rows += f"<tr><td>{label}</td>{cells}</tr>"
 
+    # Previous verdicts for trend badges
+    prev_verdicts = (snapshot or {}).get("verdicts", {})
+    _vrank = {"Strong Buy": 5, "Buy": 4, "Accumulate": 3, "Hold": 2, "Watch": 1}
+
     # Price cards
     cards_html = ""
     for ticker in tickers:
-        d        = etf_data[ticker]
-        ytd      = d.get("ytd_ret");  one_yr = d.get("one_yr_ret");  fh = d.get("from_high")
-        five_yr  = d.get("five_yr_ret")
-        ten_yr   = d.get("ten_yr_ret")
+        d         = etf_data[ticker]
+        ytd       = d.get("ytd_ret");  one_yr = d.get("one_yr_ret");  fh = d.get("from_high")
+        five_yr   = d.get("five_yr_ret")
+        ten_yr    = d.get("ten_yr_ret")
         twenty_yr = d.get("twenty_yr_ret")
-        dchg     = d.get("day_chg")
-        day_s  = f"{arrow(dchg)} {abs(dchg):.2f}% today" if dchg is not None else "— today"
+        dchg      = d.get("day_chg")
+        sharpe    = d.get("sharpe_1y")
+        sortino   = d.get("sortino_1y")
+        max_dd    = d.get("max_drawdown")
+        curr_dd   = d.get("curr_drawdown")
+        ma_above  = d.get("is_above_200ma")
+        day_s     = f"{arrow(dchg)} {abs(dchg):.2f}% today" if dchg is not None else "— today"
         _, v_cls, v_note = _get_verdict(ticker, d, ai_verdicts)
-        # Show 1Y rank badge
+        # MA signal badge
+        ma_badge = ""
+        if ma_above is not None:
+            ma_col  = "#1a7a4a" if ma_above else "#c8440a"
+            ma_text = "▲ 200d MA" if ma_above else "▼ 200d MA"
+            ma_badge = f'<div style="font-size:7.5px;color:{ma_col};margin-top:2px">{ma_text}</div>'
+        # 1Y rank badge
         all_1y    = [(t, etf_data[t].get("one_yr_ret") or 0) for t in tickers]
         rank      = sorted(all_1y, key=lambda x: -x[1]).index((ticker, one_yr or 0)) + 1
         rank_html = f'<div class="rank">#{rank} 1Y</div>'
         cards_html += f"""
     <div class="pc {d['cls']}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><div class="pc-ticker">{ticker}</div><div class="pc-name">{d['name']}</div></div>
+        <div><div class="pc-ticker">{ticker}</div><div class="pc-name">{d['name']}</div>{ma_badge}</div>
         {rank_html}
       </div>
       <div class="pc-price">{fp(d.get('price'))}</div>
@@ -699,11 +1018,15 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
       <div class="pr"><span class="pl">52W HIGH</span><span class="pv">{fp(d.get('w52_high'))}</span></div>
       <div class="pr"><span class="pl">52W LOW</span><span class="pv">{fp(d.get('w52_low'))}</span></div>
       <div class="pr"><span class="pl">FROM HIGH</span><span class="pv {ccls(fh)}">{fpct(fh)}</span></div>
+      <div class="pr"><span class="pl">CURR DRAWDOWN</span><span class="pv {ccls(curr_dd)}">{f"{curr_dd:+.1f}%" if curr_dd is not None else "N/A"}</span></div>
+      <div class="pr"><span class="pl">MAX DRAWDOWN</span><span class="pv dn">{f"{max_dd:.1f}%" if max_dd is not None else "N/A"}</span></div>
       <div class="pr"><span class="pl">1Y RETURN</span><span class="pv {ccls(one_yr)}">{fpct(one_yr)}</span></div>
       <div class="pr"><span class="pl">5Y RETURN</span><span class="pv {ccls(five_yr)}">{fpct(five_yr)}</span></div>
       <div class="pr"><span class="pl">10Y RETURN</span><span class="pv {ccls(ten_yr)}">{fpct(ten_yr)}</span></div>
       <div class="pr"><span class="pl">20Y RETURN</span><span class="pv {ccls(twenty_yr)}">{fpct(twenty_yr)}</span></div>
       <div class="pr"><span class="pl">YTD</span><span class="pv {ccls(ytd)}">{fpct(ytd)}</span></div>
+      <div class="pr"><span class="pl">SHARPE (1Y)</span><span class="pv {ccls(sharpe)}">{f"{sharpe:.2f}" if sharpe is not None else "N/A"}</span></div>
+      <div class="pr"><span class="pl">SORTINO (1Y)</span><span class="pv {ccls(sortino)}">{f"{sortino:.2f}" if sortino is not None else "N/A"}</span></div>
       <div class="pr"><span class="pl">VOL (1Y)</span><span class="pv">{f"{d['vol_1y']:.1f}%" if d.get('vol_1y') else 'N/A'}</span></div>
       <div class="pr"><span class="pl">MER</span><span class="pv">{fmer(d.get('mer'))}</span></div>
       <div class="pr"><span class="pl">YIELD</span><span class="pv">{fyld(d.get('div_yield'))}</span></div>
@@ -713,13 +1036,28 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
     # Verdict row
     verdicts_html = ""
     verdict_source = "AI-Powered" if ai_verdicts else "Rules-Based"
+    regime_badge  = ""
+    if regime:
+        rlabel, rcolor, rdesc = regime
+        regime_badge = f' · <span style="color:{rcolor};font-weight:500">{rlabel.upper()} REGIME</span> — {rdesc}'
     for ticker in tickers:
         d = etf_data[ticker]
         v_label, v_cls, v_note = _get_verdict(ticker, d, ai_verdicts)
+        # Trend badge vs previous run
+        trend_html = ""
+        prev_lbl   = prev_verdicts.get(ticker)
+        if prev_lbl and prev_lbl != v_label:
+            cur_r  = _vrank.get(v_label, 0)
+            prev_r = _vrank.get(prev_lbl, 0)
+            if cur_r > prev_r:
+                trend_html = f'<div style="font-size:7.5px;color:#1a7a4a;margin-top:3px">↑ from {prev_lbl}</div>'
+            else:
+                trend_html = f'<div style="font-size:7.5px;color:#c8440a;margin-top:3px">↓ from {prev_lbl}</div>'
         verdicts_html += f"""
     <div class="vc">
       <div class="vt" style="color:{d['color']}">{ticker}</div>
       <div class="vb {v_cls}">{v_label}</div>
+      {trend_html}
       <div class="vn">{v_note}</div>
     </div>"""
 
@@ -773,8 +1111,33 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
           <div style="font-size:8px;color:#5a5650;line-height:1.5">{ps['desc']}</div>
         </div>"""
 
+    # DCA overlay lines on portfolio chart
+    if dca_series:
+        for pname, ds in dca_series.items():
+            port_ds.append({
+                "label": f"{pname} (DCA)", "data": ds["values"],
+                "borderColor": ds["color"],
+                "borderWidth": 1.5,
+                "pointRadius": 0, "pointHoverRadius": 4,
+                "tension": 0.35, "fill": False,
+                "borderDash": [4, 4],
+            })
+
+    # ASX 200 benchmark line
+    if benchmark_series:
+        port_ds.append({
+            "label": "ASX 200 (benchmark)", "data": benchmark_series["values"],
+            "borderColor": "#9a9690",
+            "borderWidth": 1.5,
+            "pointRadius": 0, "pointHoverRadius": 4,
+            "tension": 0.35, "fill": False,
+            "borderDash": [6, 3],
+        })
+
     etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{etf_data[t]["color"]}"></div>{t}</div>' for t in tickers)
     port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:#c8c4bc">{p}</span></div>' for p in portfolios)
+    if benchmark_series:
+        port_legend += '<div class="li"><div class="ld" style="background:#9a9690;border-style:dashed"></div><span style="color:#6a6660">ASX 200</span></div>'
 
     # ── AI content: news, insights ───────────────────────────────────────────
     news_items  = (ai_content or {}).get("news", [])
@@ -809,6 +1172,111 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None):
         <div class="it">{ticker} — {d['name']}</div>
         <div class="ix">{text}</div>
       </div>"""
+
+    # ── Correlation heatmap ───────────────────────────────────────────────────
+    corr_html = ""
+    if correlations:
+        valid_t = [t for t in tickers if t in correlations]
+        header  = "<tr><th></th>" + "".join(
+            f'<th style="color:{etf_data[t]["color"]}">{t}</th>' for t in valid_t
+        ) + "</tr>"
+        rows = ""
+        for t1 in valid_t:
+            cells = f'<td style="font-weight:500;color:{etf_data[t1]["color"]}">{t1}</td>'
+            for t2 in valid_t:
+                v = correlations.get(t1, {}).get(t2)
+                if v is None:
+                    cells += "<td>—</td>"
+                else:
+                    if t1 == t2:
+                        bg = "rgba(100,100,100,0.15)"
+                    elif v > 0:
+                        bg = f"rgba(26,122,74,{min(v*0.6,0.55):.2f})"
+                    else:
+                        bg = f"rgba(200,68,10,{min(abs(v)*0.6,0.55):.2f})"
+                    cells += f'<td style="background:{bg};text-align:center">{v:.2f}</td>'
+            rows += f"<tr>{cells}</tr>"
+        corr_html = f"""
+  <div class="tbl-card" style="margin-bottom:20px">
+    <div class="sec-label">1-Year Return Correlation Matrix — Pairwise Pearson · 252 Trading Days</div>
+    <div style="overflow-x:auto"><table>{header}<tbody>{rows}</tbody></table></div>
+    <div style="font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic">
+      Green = positive correlation (move together) · Red = negative (inverse) · Darker = stronger signal
+    </div>
+  </div>"""
+
+    # ── Portfolio drift from equal weight ─────────────────────────────────────
+    drift_rows = ""
+    if eq_drift:
+        for t in tickers:
+            d_val = eq_drift.get(t, 0)
+            col   = "#1a7a4a" if d_val > 0.5 else ("#c8440a" if d_val < -0.5 else "#9a9690")
+            sign  = "+" if d_val >= 0 else ""
+            drift_rows += f'<span style="margin-right:16px;font-size:9px">' \
+                          f'<span style="color:{etf_data[t]["color"]}">{t}</span> ' \
+                          f'<span style="color:{col}">{sign}{d_val:.1f}pp</span></span>'
+
+    drift_html = ""
+    if drift_rows:
+        drift_html = f"""
+    <div style="background:#1a1810;border-radius:3px;padding:11px 14px;margin-top:10px;margin-bottom:0">
+      <div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px">
+        YTD Drift From Equal Weight (1/N target)
+      </div>
+      <div>{drift_rows}</div>
+    </div>"""
+
+    # ── DCA stat cards ────────────────────────────────────────────────────────
+    dca_stats_html = ""
+    if dca_series:
+        for pname, ds in dca_series.items():
+            sign    = "+" if ds["total_pct"] > 0 else ""
+            ret_col = "#4aaa74" if ds["total_pct"] > 0 else "#e87050"
+            dca_stats_html += f"""
+        <div style="background:#1a1810;border-radius:3px;padding:14px 16px;border-left:2px dashed {ds['color']}">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:4px">{pname} — DCA</div>
+          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:#f0ece4;letter-spacing:-1px">${ds['final']:,.0f}</div>
+          <div style="font-size:10px;color:{ret_col};margin:3px 0">{sign}{ds['total_pct']}% on $10k invested · {ds['cagr']}% CAGR p.a.</div>
+          <div style="font-size:8px;color:#5a5650">$1,000/year over 10 years vs $10,000 lump sum</div>
+        </div>"""
+
+    # ── Screened pool table ───────────────────────────────────────────────────
+    screened_html = ""
+    if screened_pool:
+        pool_rows = "".join(
+            f"<tr><td>{t}</td><td style='color:#9a9690'>{meta['name']}</td>"
+            f"<td class='{ccls(meta['one_yr_ret'])}'>{meta['one_yr_ret']:+.1f}%</td>"
+            f"<td style='color:#5a5650;font-size:8.5px'>Not selected this run</td></tr>"
+            for t, meta in sorted(screened_pool.items(),
+                                  key=lambda x: -x[1]["one_yr_ret"])
+        )
+        screened_html = f"""
+  <div class="tbl-card" style="margin-top:20px">
+    <div class="sec-label">Candidate Pool — Screened But Not Added This Run</div>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Ticker</th><th>Name</th><th>1Y Return</th><th>Status</th></tr></thead>
+      <tbody>{pool_rows}</tbody>
+    </table>
+    </div>
+    <div style="font-size:8.5px;color:var(--ink3);margin-top:8px;font-style:italic">
+      Top 3 by 1Y return are added to the live report each run. Pool is re-screened daily.
+    </div>
+  </div>"""
+
+    # ── What Changed banner ───────────────────────────────────────────────────
+    whatchanged_html = ""
+    if what_changed:
+        prev_date = (snapshot or {}).get("date", "")
+        prev_lbl  = f" vs {prev_date}" if prev_date else ""
+        whatchanged_html = f"""
+  <div style="background:#f0ece8;border-left:3px solid #c8440a;border-radius:3px;
+              padding:13px 16px;margin-bottom:18px;font-size:10px;line-height:1.7;color:#3a3630">
+    <div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#9a9690;margin-bottom:5px">
+      What Changed{prev_lbl}
+    </div>
+    {what_changed}
+  </div>"""
 
     # ── Dynamic CSS strings — built from all active tickers (core + discovered) ─
     css_vars      = ";".join(f"--{etf_data[t]['cls']}:{etf_data[t]['color']}" for t in tickers)
@@ -943,7 +1411,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
   </div>
 </header>
 <div class="main">
-
+  {whatchanged_html}
   <div class="sec-label">Live Prices — {now.strftime('%d %b %Y')} · Ranked by 1Y Return</div>
   <div class="cards-grid">{cards_html}</div>
 
@@ -966,7 +1434,9 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
     </div>
   </div>
 
-  <div class="sec-label">Verdict — {verdict_source} · Live Yahoo Finance Data + News Context</div>
+  {corr_html}
+
+  <div class="sec-label">Verdict — {verdict_source} · Live Yahoo Finance Data + News Context{regime_badge}</div>
   <div class="verdict-row">{verdicts_html}</div>
 
   <div class="dark">
@@ -992,18 +1462,22 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
       <div class="alloc-note">
         {'  ·  '.join(f'<span style="color:{portfolio_series[p]["color"]}">{p}</span>: {portfolios[p].get("rationale", allocation_desc(portfolios[p]["allocs"]))}' for p in portfolios)}
       </div>
+      {drift_html}
     </div>
 
     <div class="port-chart-card">
       <div class="chart-hdr">
-        <div><div class="chart-t" style="color:#f0ece4">10-Year Portfolio Simulation — $10,000 Invested Jan {start_yr}</div>
-        <div class="chart-s" style="color:#6a6660">Annual returns from Yahoo Finance · Allocations recommended by Claude AI from today's live data · AUD</div></div>
+        <div><div class="chart-t" style="color:#f0ece4">10-Year Portfolio Simulation — $10,000 Lump Sum &amp; DCA · Jan {start_yr}</div>
+        <div class="chart-s" style="color:#6a6660">Annual returns from Yahoo Finance · Solid = lump sum · Dashed = DCA $1k/yr · Grey = ASX 200 benchmark · AUD</div></div>
         <div class="legend">{port_legend}</div>
       </div>
       <canvas id="portChart" style="max-height:310px"></canvas>
       <div class="port-stats">{port_stats_html}</div>
+      {f'<div style="margin-top:12px"><div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:8px">DCA Equivalent ($1,000/year — same total invested)</div><div class="port-stats">{dca_stats_html}</div></div>' if dca_stats_html else ''}
     </div>
   </div>
+
+  {screened_html}
 
 </div>
 <footer>
@@ -1129,16 +1603,30 @@ def main():
     print(f"\n🚀 ASX ETF Dashboard — {now.strftime('%d %b %Y %H:%M AEST')}")
     print("  Fully dynamic. Prices, returns, volatility & allocations all computed today.\n")
 
-    print("🔍 Screening candidate pool for top performers...")
-    discovered = discover_top_etfs(now, n=3)
+    print("📂 Loading previous snapshot...")
+    snapshot = load_last_snapshot()
+    if snapshot.get("date"):
+        print(f"  Previous run: {snapshot['date']}")
+    else:
+        print("  No previous snapshot — this appears to be the first run.")
+
+    print("\n🔍 Screening candidate pool for top performers...")
+    discovered, screened_pool = discover_top_etfs(now, n=3)
     TICKERS.update(discovered)
     if discovered:
-        print(f"  Added {len(discovered)} high-performing ETF(s) to this run: {', '.join(discovered)}")
-    else:
-        print("  No candidates outperformed the core list — proceeding with base ETFs.")
+        print(f"  Added {len(discovered)} ETF(s): {', '.join(discovered)}")
+    if screened_pool:
+        print(f"  Screened (not added): {', '.join(screened_pool)}")
 
     print("\n📡 Fetching live data from Yahoo Finance...")
     etf_data = fetch_all_data(now)
+
+    print("\n📊 Computing analytics (correlations, regime, drift)...")
+    correlations = compute_correlations(etf_data)
+    regime       = detect_market_regime(etf_data)
+    eq_drift     = compute_equal_weight_drift(etf_data)
+    rlabel, rcolor, rdesc = regime
+    print(f"  Regime: {rlabel.upper()} — {rdesc}")
 
     print("\n🤖 Generating AI-powered portfolio strategies (Anthropic API)...")
     portfolios = generate_ai_portfolios(etf_data, now)
@@ -1148,16 +1636,28 @@ def main():
     for pname, pmeta in portfolios.items():
         print(f"  {pname:15s} → {allocation_desc(pmeta['allocs'])}")
 
-    print("\n📐 Running 10-year simulation on live returns...")
+    print("\n📐 Running simulations (lump sum, DCA, benchmark)...")
     portfolio_series = build_portfolio_series(etf_data, portfolios, now)
     for pname, ps in portfolio_series.items():
         print(f"  {pname:15s} → ${ps['final']:>10,.0f}  ({ps['total_pct']:+.1f}%  CAGR {ps['cagr']:.1f}%)")
+    dca_series       = build_dca_series(etf_data, portfolios, now)
+    benchmark_series = fetch_benchmark_series(now)
 
-    print("\n📰 Fetching AI-generated news & insights (Anthropic API)...")
-    ai_content = fetch_ai_news(etf_data, now)
+    print("\n📰 Fetching AI-generated news, insights & what-changed (Anthropic API)...")
+    ai_content   = fetch_ai_news(etf_data, now, regime=regime)
+    what_changed = generate_whatchanged_summary(etf_data, snapshot, ai_content, now)
+
+    print("\n💾 Saving snapshot...")
+    save_snapshot(etf_data, ai_content, now)
 
     print("\n🎨 Generating HTML...")
-    html = generate_html(etf_data, portfolios, portfolio_series, now, ai_content)
+    html = generate_html(
+        etf_data, portfolios, portfolio_series, now, ai_content,
+        correlations=correlations, regime=regime, dca_series=dca_series,
+        what_changed=what_changed, snapshot=snapshot,
+        benchmark_series=benchmark_series, screened_pool=screened_pool,
+        eq_drift=eq_drift,
+    )
 
     out = Path(__file__).parent.parent / "output"
     out.mkdir(exist_ok=True)
