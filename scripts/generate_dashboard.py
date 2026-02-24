@@ -284,7 +284,7 @@ def fetch_ai_news(etf_data, now):
     Returns: { "news": [...6 cards...], "insights": {ticker: text} }
     Falls back to placeholder text if API key missing or call fails.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ["ANTHROPIC_API_KEY"]
     if not api_key:
         print("  ⚠ ANTHROPIC_API_KEY not set — skipping AI news section")
         return _fallback_news(etf_data)
@@ -804,7 +804,7 @@ def main():
     print(f"  ✓ Saved → {fname.name}")
 
     print("\n📧 Sending email...")
-    recipient = os.environ.get("EMAIL_RECIPIENT") or os.environ["EMAIL_SENDER"]
+    recipient = os.environ["EMAIL_RECIPIENT"] or os.environ["EMAIL_SENDER"]
     send_email(html, recipient, now)
     print("\n✅ Done.\n")
 
