@@ -1226,10 +1226,21 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
             "borderDash": [6, 3],
         })
 
-    etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{etf_data[t]["color"]}"></div>{t}</div>' for t in tickers)
-    port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:var(--ink)">{p}</span></div>' for p in portfolios)
+    etf_legend  = "".join(
+        f'<button class="li li-tog" onclick="toggleLine(this,\'etfChart\',\'{t}\')">'
+        f'<span class="ld" style="background:{etf_data[t]["color"]}"></span>{t}</button>'
+        for t in tickers
+    )
+    port_legend = "".join(
+        f'<button class="li li-tog" onclick="toggleLine(this,\'portChart\',\'{p}\')">'
+        f'<span class="ld" style="background:{portfolio_series[p]["color"]}"></span>'
+        f'<span style="color:var(--ink)">{p}</span></button>'
+        for p in portfolios
+    )
     if benchmark_series:
-        port_legend += '<div class="li"><div class="ld" style="background:#9a9690;border-style:dashed"></div><span style="color:var(--ink2)">ASX 200</span></div>'
+        port_legend += ('<button class="li li-tog" onclick="toggleLine(this,\'portChart\',\'ASX 200\')">'
+                        '<span class="ld" style="background:#9a9690;border-style:dashed"></span>'
+                        '<span style="color:var(--ink2)">ASX 200</span></button>')
 
     # ── AI content: news, insights ───────────────────────────────────────────
     news_items  = (ai_content or {}).get("news", [])
@@ -1449,6 +1460,8 @@ header{{padding:34px 48px 22px;border-bottom:1px solid var(--border);display:fle
 .chart-s{{font-size:8.5px;color:var(--ink3);letter-spacing:.5px;margin-top:3px;}}
 .legend{{display:flex;flex-wrap:wrap;gap:10px;}}.li{{display:flex;align-items:center;gap:5px;font-size:9.5px;font-weight:500;}}
 .ld{{width:20px;height:2.5px;border-radius:2px;flex-shrink:0;}}
+.li-tog{{cursor:pointer;border:none;background:none;padding:0;font-family:inherit;font-size:inherit;color:inherit;transition:opacity .15s;}}
+.li-tog:hover{{opacity:.65;}}.li-tog.line-hidden{{opacity:.28;}}.li-tog.line-hidden .ld{{filter:grayscale(1);}}
 table{{width:100%;border-collapse:collapse;}}
 th{{font-size:8.5px;letter-spacing:1px;color:var(--ink3);text-transform:uppercase;padding:0 0 8px;border-bottom:1px solid var(--border);font-weight:500;text-align:left;}}
 th:not(:first-child){{text-align:right;}}
@@ -1611,7 +1624,16 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 </footer>
 <script>
 Chart.defaults.font.family="'DM Mono',monospace";Chart.defaults.font.size=10;
-new Chart(document.getElementById('etfChart').getContext('2d'),{{
+function toggleLine(btn,chartId,label){{
+  const ch=chartId==='etfChart'?window._etfChart:window._portChart;
+  if(!ch)return;
+  ch.data.datasets.forEach(ds=>{{
+    if(ds.label===label||ds.label.startsWith(label+' (')){{ds.hidden=!ds.hidden;}}
+  }});
+  ch.update();
+  btn.classList.toggle('line-hidden');
+}}
+window._etfChart=new Chart(document.getElementById('etfChart').getContext('2d'),{{
   type:'line',data:{{labels:{json.dumps(month_labels)},datasets:{json.dumps(monthly_ds)}}},
   options:{{responsive:true,interaction:{{mode:'index',intersect:false}},
     plugins:{{legend:{{display:false}},tooltip:{{backgroundColor:'#1c1916',titleColor:'#9a9690',bodyColor:'#f0ece4',borderColor:'#3a3630',borderWidth:1,padding:11,
@@ -1620,7 +1642,7 @@ new Chart(document.getElementById('etfChart').getContext('2d'),{{
       y:{{grid:{{color:'rgba(0,0,0,0.04)'}},ticks:{{color:'#9a9690',callback:v=>v.toFixed(0)}},
         title:{{display:true,text:'Indexed (base=100)',color:'#9a9690',font:{{size:9}}}}}}}}}}
 }});
-new Chart(document.getElementById('portChart').getContext('2d'),{{
+window._portChart=new Chart(document.getElementById('portChart').getContext('2d'),{{
   type:'line',data:{{labels:{json.dumps(port_labels_clean)},datasets:{json.dumps(port_ds)}}},
   options:{{responsive:true,interaction:{{mode:'index',intersect:false}},
     plugins:{{legend:{{display:false}},tooltip:{{backgroundColor:'#1c1916',titleColor:'#9a9690',bodyColor:'#f0ece4',borderColor:'#3a3630',borderWidth:1,padding:13,
