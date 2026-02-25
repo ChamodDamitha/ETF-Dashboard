@@ -1113,11 +1113,11 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
         sign    = "+" if ps["total_pct"] > 0 else ""
         ret_col = "#4aaa74" if ps["total_pct"] > 0 else "#e87050"
         port_stats_html += f"""
-        <div style="background:#1a1810;border-radius:3px;padding:14px 16px;border-left:2px solid {ps['color']}">
-          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:4px">{pname}</div>
-          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:#f0ece4;letter-spacing:-1px">${ps['final']:,.0f}</div>
+        <div style="background:var(--bg2);border-radius:3px;padding:14px 16px;border-left:2px solid {ps['color']}">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">{pname}</div>
+          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:var(--ink);letter-spacing:-1px">${ps['final']:,.0f}</div>
           <div style="font-size:10px;color:{ret_col};margin:3px 0">{sign}{ps['total_pct']}% total · {ps['cagr']}% CAGR p.a.</div>
-          <div style="font-size:8px;color:#5a5650;line-height:1.5">{ps['desc']}</div>
+          <div style="font-size:8px;color:var(--ink2);line-height:1.5">{ps['desc']}</div>
         </div>"""
 
     # DCA overlay lines on portfolio chart
@@ -1144,9 +1144,9 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
         })
 
     etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{etf_data[t]["color"]}"></div>{t}</div>' for t in tickers)
-    port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:#c8c4bc">{p}</span></div>' for p in portfolios)
+    port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:var(--ink)">{p}</span></div>' for p in portfolios)
     if benchmark_series:
-        port_legend += '<div class="li"><div class="ld" style="background:#9a9690;border-style:dashed"></div><span style="color:#6a6660">ASX 200</span></div>'
+        port_legend += '<div class="li"><div class="ld" style="background:#9a9690;border-style:dashed"></div><span style="color:var(--ink2)">ASX 200</span></div>'
 
     # ── AI content: news, insights ───────────────────────────────────────────
     news_items  = (ai_content or {}).get("news", [])
@@ -1228,8 +1228,8 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     drift_html = ""
     if drift_rows:
         drift_html = f"""
-    <div style="background:#1a1810;border-radius:3px;padding:11px 14px;margin-top:10px;margin-bottom:0">
-      <div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px">
+    <div style="background:var(--bg2);border-radius:3px;padding:11px 14px;margin-top:10px;margin-bottom:0">
+      <div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">
         YTD Drift From Equal Weight (1/N target)
       </div>
       <div>{drift_rows}</div>
@@ -1242,11 +1242,11 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
             sign    = "+" if ds["total_pct"] > 0 else ""
             ret_col = "#4aaa74" if ds["total_pct"] > 0 else "#e87050"
             dca_stats_html += f"""
-        <div style="background:#1a1810;border-radius:3px;padding:14px 16px;border-left:2px dashed {ds['color']}">
-          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:4px">{pname} — DCA</div>
-          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:#f0ece4;letter-spacing:-1px">${ds['final']:,.0f}</div>
+        <div style="background:var(--bg2);border-radius:3px;padding:14px 16px;border-left:2px dashed {ds['color']}">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">{pname} — DCA</div>
+          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:var(--ink);letter-spacing:-1px">${ds['final']:,.0f}</div>
           <div style="font-size:10px;color:{ret_col};margin:3px 0">{sign}{ds['total_pct']}% on $10k invested · {ds['cagr']}% CAGR p.a.</div>
-          <div style="font-size:8px;color:#5a5650">$1,000/year over 10 years vs $10,000 lump sum</div>
+          <div style="font-size:8px;color:var(--ink2)">$1,000/year over 10 years vs $10,000 lump sum</div>
         </div>"""
 
     # ── Screened pool table ───────────────────────────────────────────────────
@@ -1348,25 +1348,25 @@ tr:last-child td{{border-bottom:none;}}
 .vb.buy{{background:rgba(26,122,74,.1);color:#1a7a4a}}.vb.hold{{background:rgba(184,146,10,.1);color:var(--qau)}}
 .vb.watch{{background:rgba(200,68,10,.1);color:var(--ivv)}}.vb.accum{{background:rgba(10,106,138,.1);color:var(--vgs)}}
 .vn{{font-size:8.5px;color:var(--ink3);line-height:1.5;}}
-.dark{{background:var(--ink);border-radius:4px;padding:28px 32px;margin-bottom:20px;}}
-.dark .sec-label{{color:#5a5650;}}.dark .sec-label::after{{background:#2a2820;}}
-.port-chart-card{{background:#161410;border:1px solid #2a2820;border-radius:4px;padding:22px;margin-top:20px;}}
+.dark{{background:var(--bg2);border-radius:4px;padding:28px 32px;margin-bottom:20px;}}
+.dark .sec-label{{color:var(--ink3);}}.dark .sec-label::after{{background:var(--border);}}
+.port-chart-card{{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:22px;margin-top:20px;}}
 .port-stats{{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:14px;}}
-.alloc-note{{font-size:8.5px;color:#6a6660;margin-top:10px;font-style:italic;}}
+.alloc-note{{font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic;}}
 .news-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-bottom:24px;}}
-.news-block{{background:#161410;border-radius:3px;padding:15px 17px;border-left:3px solid #3a3830;}}
+.news-block{{background:var(--card);border-radius:3px;padding:15px 17px;border-left:3px solid var(--border);}}
 .news-block.red{{border-color:#c8440a;}}.news-block.amber{{border-color:#b8920a;}}.news-block.green{{border-color:#1a7a4a;}}
 .news-tag{{font-size:8px;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;font-weight:500;}}
 .news-block.red .news-tag{{color:#c8440a;}}.news-block.amber .news-tag{{color:#b8920a;}}.news-block.green .news-tag{{color:#4aaa74;}}
-.news-head{{font-size:12px;color:#e8e4dc;font-weight:500;margin-bottom:6px;line-height:1.4;}}
-.news-body{{font-size:10px;color:#7a7670;line-height:1.65;}}
-.news-impact{{font-size:9px;margin-top:8px;padding-top:8px;border-top:1px solid #2a2820;letter-spacing:.5px;}}
+.news-head{{font-size:12px;color:var(--ink);font-weight:500;margin-bottom:6px;line-height:1.4;}}
+.news-body{{font-size:10px;color:var(--ink2);line-height:1.65;}}
+.news-impact{{font-size:9px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);letter-spacing:.5px;}}
 .news-block.red .news-impact{{color:#e87050;}}.news-block.amber .news-impact{{color:#d8a830;}}.news-block.green .news-impact{{color:#4aaa74;}}
 .ig{{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:22px;}}
-.ins{{border-left:2px solid #3a3830;padding-left:13px;}}
+.ins{{border-left:2px solid var(--border);padding-left:13px;}}
 {ins_css}
-.it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px;}}
-.ix{{font-size:11px;color:#bfbab2;line-height:1.75;}}
+.it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px;}}
+.ix{{font-size:11px;color:var(--ink2);line-height:1.75;}}
 footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:8.5px;color:var(--ink3);}}
 @media(max-width:1024px){{
   .cards-grid{{grid-template-columns:repeat(3,1fr);}}
@@ -1456,7 +1456,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
     <div class="sec-label">AI-Powered Portfolio Strategies — Allocations Recommended by Claude Based on Today's Live Data</div>
 
-    <div class="tbl-card" style="background:#1a1810;border-color:#2a2820;padding:18px 20px;margin-bottom:0">
+    <div class="tbl-card" style="padding:18px 20px;margin-bottom:0">
       <div style="overflow-x:auto">
       <table>
         <thead>
@@ -1476,13 +1476,13 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
     <div class="port-chart-card">
       <div class="chart-hdr">
-        <div><div class="chart-t" style="color:#f0ece4">10-Year Portfolio Simulation — $10,000 Lump Sum &amp; DCA · Jan {start_yr}</div>
-        <div class="chart-s" style="color:#6a6660">Annual returns from Yahoo Finance · Solid = lump sum · Dashed = DCA $1k/yr · Grey = ASX 200 benchmark · AUD</div></div>
+        <div><div class="chart-t">10-Year Portfolio Simulation — $10,000 Lump Sum &amp; DCA · Jan {start_yr}</div>
+        <div class="chart-s">Annual returns from Yahoo Finance · Solid = lump sum · Dashed = DCA $1k/yr · Grey = ASX 200 benchmark · AUD</div></div>
         <div class="legend">{port_legend}</div>
       </div>
       <canvas id="portChart" style="max-height:310px"></canvas>
       <div class="port-stats">{port_stats_html}</div>
-      {f'<div style="margin-top:12px"><div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:8px">DCA Equivalent ($1,000/year — same total invested)</div><div class="port-stats">{dca_stats_html}</div></div>' if dca_stats_html else ''}
+      {f'<div style="margin-top:12px"><div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:8px">DCA Equivalent ($1,000/year — same total invested)</div><div class="port-stats">{dca_stats_html}</div></div>' if dca_stats_html else ''}
     </div>
   </div>
 
@@ -1507,11 +1507,11 @@ new Chart(document.getElementById('etfChart').getContext('2d'),{{
 new Chart(document.getElementById('portChart').getContext('2d'),{{
   type:'line',data:{{labels:{json.dumps(port_labels_clean)},datasets:{json.dumps(port_ds)}}},
   options:{{responsive:true,interaction:{{mode:'index',intersect:false}},
-    plugins:{{legend:{{display:false}},tooltip:{{backgroundColor:'#0e0c0a',titleColor:'#8a8680',bodyColor:'#c8c4bc',borderColor:'#2a2820',borderWidth:1,padding:13,
+    plugins:{{legend:{{display:false}},tooltip:{{backgroundColor:'#1c1916',titleColor:'#9a9690',bodyColor:'#f0ece4',borderColor:'#3a3630',borderWidth:1,padding:13,
       callbacks:{{label:c=>{{const v=c.parsed.y,g=((v/{INITIAL}-1)*100).toFixed(1),s=g>=0?'+':'';return`  ${{c.dataset.label}}: $${{Math.round(v).toLocaleString()}} (${{s}}${{g}}%)`;}}}}}}}},
-    scales:{{x:{{grid:{{color:'rgba(255,255,255,0.03)'}},ticks:{{color:'#6a6660',maxRotation:0}}}},
-      y:{{grid:{{color:'rgba(255,255,255,0.03)'}},ticks:{{color:'#6a6660',callback:v=>'$'+(v/1000).toFixed(0)+'k'}},
-        title:{{display:true,text:'Portfolio Value (AUD)',color:'#6a6660',font:{{size:9}}}}}}}}}}
+    scales:{{x:{{grid:{{color:'rgba(0,0,0,0.04)'}},ticks:{{color:'#9a9690',maxRotation:0}}}},
+      y:{{grid:{{color:'rgba(0,0,0,0.04)'}},ticks:{{color:'#9a9690',callback:v=>'$'+(v/1000).toFixed(0)+'k'}},
+        title:{{display:true,text:'Portfolio Value (AUD)',color:'#9a9690',font:{{size:9}}}}}}}}}}
 }});
 </script>
 </body>
