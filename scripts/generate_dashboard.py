@@ -475,6 +475,46 @@ def compute_correlations(etf_data):
     return matrix
 
 
+def compute_ytd_correlations(etf_data, now):
+    """Pairwise Pearson correlations using only the current calendar year's daily returns."""
+    import pandas as pd
+
+    current_year = now.year
+    tickers = list(etf_data.keys())
+
+    frames = {}
+    for t in tickers:
+        rets  = etf_data[t].get("daily_rets_10y", [])
+        dates = etf_data[t].get("daily_rets_10y_dates", [])
+        if len(rets) != len(dates) or not rets:
+            continue
+        s = pd.Series(rets, index=pd.to_datetime(dates))
+        ytd = s[s.index.year == current_year]
+        if len(ytd) >= 5:
+            frames[t] = ytd
+
+    if not frames:
+        return {}
+
+    df = pd.DataFrame(frames).sort_index()
+    valid = list(df.columns)
+
+    matrix = {}
+    for t1 in valid:
+        matrix[t1] = {}
+        for t2 in valid:
+            if t1 == t2:
+                matrix[t1][t2] = 1.0
+                continue
+            pair = df[[t1, t2]].dropna()
+            if len(pair) < 5:
+                continue
+            corr = pair[t1].corr(pair[t2])
+            if not np.isnan(corr):
+                matrix[t1][t2] = round(float(corr), 2)
+    return matrix
+
+
 def detect_market_regime(etf_data):
     """
     Bull/bear/mixed regime from the proportion of ETFs above their 200-day MA.
@@ -993,7 +1033,7 @@ def arrow(v): return "▲" if (v or 0) > 0 else "▼"
 # ── HTML generation ──────────────────────────────────────────────────────────
 
 def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
-                  correlations=None, regime=None, dca_series=None,
+                  correlations=None, corr_ytd=None, regime=None, dca_series=None,
                   what_changed=None, snapshot=None, benchmark_series=None,
                   screened_pool=None, eq_drift=None):
     tickers   = list(etf_data.keys())
@@ -1257,6 +1297,38 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     </div>
   </div>"""
 
+    # ── YTD correlation matrix ────────────────────────────────────────────────
+    corr_ytd_html = ""
+    if corr_ytd:
+        valid_t  = [t for t in tickers if t in corr_ytd]
+        header_y = "<tr><th></th>" + "".join(
+            f'<th style="color:{etf_data[t]["color"]}">{t}</th>' for t in valid_t
+        ) + "</tr>"
+        rows_y = ""
+        for t1 in valid_t:
+            cells = f'<td style="font-weight:500;color:{etf_data[t1]["color"]}">{t1}</td>'
+            for t2 in valid_t:
+                v = corr_ytd.get(t1, {}).get(t2)
+                if v is None:
+                    cells += "<td>—</td>"
+                else:
+                    if t1 == t2:
+                        bg = "rgba(100,100,100,0.15)"
+                    elif v > 0:
+                        bg = f"rgba(26,122,74,{min(v*0.6,0.55):.2f})"
+                    else:
+                        bg = f"rgba(200,68,10,{min(abs(v)*0.6,0.55):.2f})"
+                    cells += f'<td style="background:{bg};text-align:center">{v:.2f}</td>'
+            rows_y += f"<tr>{cells}</tr>"
+        corr_ytd_html = f"""
+  <div class="tbl-card" style="margin-bottom:20px">
+    <div class="sec-label">{now.year} YTD Correlation Matrix — Pearson · Daily Returns Since 1 Jan {now.year}</div>
+    <div style="overflow-x:auto"><table>{header_y}<tbody>{rows_y}</tbody></table></div>
+    <div style="font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic">
+      Current-year snapshot · Green = positive (move together) · Red = negative (inverse) · Darker = stronger signal
+    </div>
+  </div>"""
+
     # ── Portfolio drift from equal weight ─────────────────────────────────────
     drift_rows = ""
     if eq_drift:
@@ -1487,6 +1559,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
   </div>
 
   {corr_html}
+  {corr_ytd_html}
 
   <div class="sec-label">Verdict — {verdict_source} · Live Yahoo Finance Data + News Context{regime_badge}</div>
   <div class="verdict-row">{verdicts_html}</div>
@@ -1675,6 +1748,7 @@ def main():
 
     print("\n📊 Computing analytics (correlations, regime, drift)...")
     correlations = compute_correlations(etf_data)
+    corr_ytd     = compute_ytd_correlations(etf_data, now)
     regime       = detect_market_regime(etf_data)
     eq_drift     = compute_equal_weight_drift(etf_data)
     rlabel, rcolor, rdesc = regime
@@ -1705,7 +1779,7 @@ def main():
     print("\n🎨 Generating HTML...")
     html = generate_html(
         etf_data, portfolios, portfolio_series, now, ai_content,
-        correlations=correlations, regime=regime, dca_series=dca_series,
+        correlations=correlations, corr_ytd=corr_ytd, regime=regime, dca_series=dca_series,
         what_changed=what_changed, snapshot=snapshot,
         benchmark_series=benchmark_series, screened_pool=screened_pool,
         eq_drift=eq_drift,
