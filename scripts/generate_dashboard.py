@@ -191,6 +191,7 @@ def fetch_all_data(now):
             vol_1y = None
             daily_rets_1y = []
             daily_rets_10y = []
+            daily_rets_10y_dates = []
             if close is not None:
                 sl = close[close.index.date >= one_year_ago]
                 if len(sl) > 20:
@@ -199,7 +200,9 @@ def fetch_all_data(now):
                     daily_rets_1y = dr.tolist()
                 sl10 = close[close.index.date >= ten_years_ago]
                 if len(sl10) > 200:
-                    daily_rets_10y = sl10.pct_change().dropna().tolist()
+                    dr10 = sl10.pct_change().dropna()
+                    daily_rets_10y       = dr10.tolist()
+                    daily_rets_10y_dates = [d.date() for d in dr10.index]
 
             # Sharpe & Sortino ratios (1Y, risk-free = RISK_FREE_RATE %)
             sharpe_1y  = None
@@ -274,8 +277,9 @@ def fetch_all_data(now):
                 "ma_50d":          ma_50d,
                 "ma_200d":         ma_200d,
                 "is_above_200ma":  is_above_200ma,
-                "daily_rets_1y":   daily_rets_1y,
-                "daily_rets_10y":  daily_rets_10y,
+                "daily_rets_1y":        daily_rets_1y,
+                "daily_rets_10y":       daily_rets_10y,
+                "daily_rets_10y_dates": daily_rets_10y_dates,
                 "w52_high":        w52_high,
                 "w52_low":         w52_low,
                 "from_high":       from_high,
@@ -297,7 +301,7 @@ def fetch_all_data(now):
             print(f"ERROR — {exc}")
             result[ticker] = {
                 **meta, "price": None, "error": str(exc),
-                "annual_returns": {}, "monthly_indexed": [], "daily_rets_1y": [], "daily_rets_10y": [],
+                "annual_returns": {}, "monthly_indexed": [], "daily_rets_1y": [], "daily_rets_10y": [], "daily_rets_10y_dates": [],
                 "one_yr_ret": None, "ytd_ret": None, "vol_1y": None,
                 "five_yr_ret": None, "ten_yr_ret": None, "twenty_yr_ret": None,
                 "sharpe_1y": None, "sortino_1y": None,
@@ -413,22 +417,101 @@ def build_portfolio_series(etf_data, portfolios, now):
 # ── STEP 3a: Analytics — correlations, regime, DCA, benchmarks ───────────────
 
 def compute_correlations(etf_data):
-    """Pairwise Pearson correlations of 10Y daily returns for all active ETFs."""
+    """
+    Per-year Pearson correlations averaged across up to 10 calendar years.
+    For each year present in the data, compute the pairwise correlation of
+    daily returns, then return the mean across all qualifying years.
+    """
+    import pandas as pd
+
     tickers = list(etf_data.keys())
-    series  = {t: etf_data[t].get("daily_rets_10y", []) for t in tickers}
-    valid   = [t for t in tickers if len(series[t]) > 200]
-    matrix  = {}
+
+    # Build a DataFrame of daily returns indexed by date, one column per ticker
+    frames = {}
+    for t in tickers:
+        rets  = etf_data[t].get("daily_rets_10y", [])
+        dates = etf_data[t].get("daily_rets_10y_dates", [])
+        if len(rets) == len(dates) and len(rets) > 200:
+            frames[t] = pd.Series(rets, index=pd.to_datetime(dates))
+
+    if not frames:
+        return {}
+
+    df = pd.DataFrame(frames).sort_index()
+    valid = list(df.columns)
+
+    years = sorted(df.index.year.unique())
+
+    # Accumulate per-year correlations
+    year_corr_sum   = {t1: {t2: 0.0 for t2 in valid} for t1 in valid}
+    year_corr_count = {t1: {t2: 0   for t2 in valid} for t1 in valid}
+
+    for yr in years:
+        yr_df = df[df.index.year == yr].dropna(how="all")
+        if len(yr_df) < 20:
+            continue
+        # Only include column pairs that both have ≥20 non-NaN obs this year
+        for t1 in valid:
+            for t2 in valid:
+                if t1 == t2:
+                    year_corr_sum[t1][t2]   += 1.0
+                    year_corr_count[t1][t2] += 1
+                    continue
+                pair = yr_df[[t1, t2]].dropna()
+                if len(pair) < 20:
+                    continue
+                corr = pair[t1].corr(pair[t2])
+                if not np.isnan(corr):
+                    year_corr_sum[t1][t2]   += corr
+                    year_corr_count[t1][t2] += 1
+
+    matrix = {}
+    for t1 in valid:
+        matrix[t1] = {}
+        for t2 in valid:
+            cnt = year_corr_count[t1][t2]
+            if cnt > 0:
+                matrix[t1][t2] = round(year_corr_sum[t1][t2] / cnt, 2)
+    return matrix
+
+
+def compute_ytd_correlations(etf_data, now):
+    """Pairwise Pearson correlations using only the current calendar year's daily returns."""
+    import pandas as pd
+
+    current_year = now.year
+    tickers = list(etf_data.keys())
+
+    frames = {}
+    for t in tickers:
+        rets  = etf_data[t].get("daily_rets_10y", [])
+        dates = etf_data[t].get("daily_rets_10y_dates", [])
+        if len(rets) != len(dates) or not rets:
+            continue
+        s = pd.Series(rets, index=pd.to_datetime(dates))
+        ytd = s[s.index.year == current_year]
+        if len(ytd) >= 5:
+            frames[t] = ytd
+
+    if not frames:
+        return {}
+
+    df = pd.DataFrame(frames).sort_index()
+    valid = list(df.columns)
+
+    matrix = {}
     for t1 in valid:
         matrix[t1] = {}
         for t2 in valid:
             if t1 == t2:
                 matrix[t1][t2] = 1.0
-            else:
-                r1 = np.array(series[t1])
-                r2 = np.array(series[t2])
-                n  = min(len(r1), len(r2))
-                corr = float(np.corrcoef(r1[-n:], r2[-n:])[0, 1])
-                matrix[t1][t2] = round(corr, 2)
+                continue
+            pair = df[[t1, t2]].dropna()
+            if len(pair) < 5:
+                continue
+            corr = pair[t1].corr(pair[t2])
+            if not np.isnan(corr):
+                matrix[t1][t2] = round(float(corr), 2)
     return matrix
 
 
@@ -950,7 +1033,7 @@ def arrow(v): return "▲" if (v or 0) > 0 else "▼"
 # ── HTML generation ──────────────────────────────────────────────────────────
 
 def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
-                  correlations=None, regime=None, dca_series=None,
+                  correlations=None, corr_ytd=None, regime=None, dca_series=None,
                   what_changed=None, snapshot=None, benchmark_series=None,
                   screened_pool=None, eq_drift=None):
     tickers   = list(etf_data.keys())
@@ -1113,11 +1196,11 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
         sign    = "+" if ps["total_pct"] > 0 else ""
         ret_col = "#4aaa74" if ps["total_pct"] > 0 else "#e87050"
         port_stats_html += f"""
-        <div style="background:#1a1810;border-radius:3px;padding:14px 16px;border-left:2px solid {ps['color']}">
-          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:4px">{pname}</div>
-          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:#f0ece4;letter-spacing:-1px">${ps['final']:,.0f}</div>
+        <div style="background:var(--bg2);border-radius:3px;padding:14px 16px;border-left:2px solid {ps['color']}">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">{pname}</div>
+          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:var(--ink);letter-spacing:-1px">${ps['final']:,.0f}</div>
           <div style="font-size:10px;color:{ret_col};margin:3px 0">{sign}{ps['total_pct']}% total · {ps['cagr']}% CAGR p.a.</div>
-          <div style="font-size:8px;color:#5a5650;line-height:1.5">{ps['desc']}</div>
+          <div style="font-size:8px;color:var(--ink2);line-height:1.5">{ps['desc']}</div>
         </div>"""
 
     # DCA overlay lines on portfolio chart
@@ -1144,9 +1227,9 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
         })
 
     etf_legend  = "".join(f'<div class="li"><div class="ld" style="background:{etf_data[t]["color"]}"></div>{t}</div>' for t in tickers)
-    port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:#c8c4bc">{p}</span></div>' for p in portfolios)
+    port_legend = "".join(f'<div class="li"><div class="ld" style="background:{portfolio_series[p]["color"]}"></div><span style="color:var(--ink)">{p}</span></div>' for p in portfolios)
     if benchmark_series:
-        port_legend += '<div class="li"><div class="ld" style="background:#9a9690;border-style:dashed"></div><span style="color:#6a6660">ASX 200</span></div>'
+        port_legend += '<div class="li"><div class="ld" style="background:#9a9690;border-style:dashed"></div><span style="color:var(--ink2)">ASX 200</span></div>'
 
     # ── AI content: news, insights ───────────────────────────────────────────
     news_items  = (ai_content or {}).get("news", [])
@@ -1207,10 +1290,42 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
             rows += f"<tr>{cells}</tr>"
         corr_html = f"""
   <div class="tbl-card" style="margin-bottom:20px">
-    <div class="sec-label">1-Year Return Correlation Matrix — Pairwise Pearson · 252 Trading Days</div>
+    <div class="sec-label">10-Year Correlation Matrix — Per-Year Pearson Averaged Across Up To 10 Calendar Years</div>
     <div style="overflow-x:auto"><table>{header}<tbody>{rows}</tbody></table></div>
     <div style="font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic">
-      Green = positive correlation (move together) · Red = negative (inverse) · Darker = stronger signal
+      Each cell = average of up to 10 annual Pearson correlations · Green = positive (move together) · Red = negative (inverse) · Darker = stronger signal
+    </div>
+  </div>"""
+
+    # ── YTD correlation matrix ────────────────────────────────────────────────
+    corr_ytd_html = ""
+    if corr_ytd:
+        valid_t  = [t for t in tickers if t in corr_ytd]
+        header_y = "<tr><th></th>" + "".join(
+            f'<th style="color:{etf_data[t]["color"]}">{t}</th>' for t in valid_t
+        ) + "</tr>"
+        rows_y = ""
+        for t1 in valid_t:
+            cells = f'<td style="font-weight:500;color:{etf_data[t1]["color"]}">{t1}</td>'
+            for t2 in valid_t:
+                v = corr_ytd.get(t1, {}).get(t2)
+                if v is None:
+                    cells += "<td>—</td>"
+                else:
+                    if t1 == t2:
+                        bg = "rgba(100,100,100,0.15)"
+                    elif v > 0:
+                        bg = f"rgba(26,122,74,{min(v*0.6,0.55):.2f})"
+                    else:
+                        bg = f"rgba(200,68,10,{min(abs(v)*0.6,0.55):.2f})"
+                    cells += f'<td style="background:{bg};text-align:center">{v:.2f}</td>'
+            rows_y += f"<tr>{cells}</tr>"
+        corr_ytd_html = f"""
+  <div class="tbl-card" style="margin-bottom:20px">
+    <div class="sec-label">{now.year} YTD Correlation Matrix — Pearson · Daily Returns Since 1 Jan {now.year}</div>
+    <div style="overflow-x:auto"><table>{header_y}<tbody>{rows_y}</tbody></table></div>
+    <div style="font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic">
+      Current-year snapshot · Green = positive (move together) · Red = negative (inverse) · Darker = stronger signal
     </div>
   </div>"""
 
@@ -1228,8 +1343,8 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     drift_html = ""
     if drift_rows:
         drift_html = f"""
-    <div style="background:#1a1810;border-radius:3px;padding:11px 14px;margin-top:10px;margin-bottom:0">
-      <div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px">
+    <div style="background:var(--bg2);border-radius:3px;padding:11px 14px;margin-top:10px;margin-bottom:0">
+      <div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">
         YTD Drift From Equal Weight (1/N target)
       </div>
       <div>{drift_rows}</div>
@@ -1242,11 +1357,11 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
             sign    = "+" if ds["total_pct"] > 0 else ""
             ret_col = "#4aaa74" if ds["total_pct"] > 0 else "#e87050"
             dca_stats_html += f"""
-        <div style="background:#1a1810;border-radius:3px;padding:14px 16px;border-left:2px dashed {ds['color']}">
-          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:4px">{pname} — DCA</div>
-          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:#f0ece4;letter-spacing:-1px">${ds['final']:,.0f}</div>
+        <div style="background:var(--bg2);border-radius:3px;padding:14px 16px;border-left:2px dashed {ds['color']}">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">{pname} — DCA</div>
+          <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:900;color:var(--ink);letter-spacing:-1px">${ds['final']:,.0f}</div>
           <div style="font-size:10px;color:{ret_col};margin:3px 0">{sign}{ds['total_pct']}% on $10k invested · {ds['cagr']}% CAGR p.a.</div>
-          <div style="font-size:8px;color:#5a5650">$1,000/year over 10 years vs $10,000 lump sum</div>
+          <div style="font-size:8px;color:var(--ink2)">$1,000/year over 10 years vs $10,000 lump sum</div>
         </div>"""
 
     # ── Screened pool table ───────────────────────────────────────────────────
@@ -1348,25 +1463,25 @@ tr:last-child td{{border-bottom:none;}}
 .vb.buy{{background:rgba(26,122,74,.1);color:#1a7a4a}}.vb.hold{{background:rgba(184,146,10,.1);color:var(--qau)}}
 .vb.watch{{background:rgba(200,68,10,.1);color:var(--ivv)}}.vb.accum{{background:rgba(10,106,138,.1);color:var(--vgs)}}
 .vn{{font-size:8.5px;color:var(--ink3);line-height:1.5;}}
-.dark{{background:var(--ink);border-radius:4px;padding:28px 32px;margin-bottom:20px;}}
-.dark .sec-label{{color:#5a5650;}}.dark .sec-label::after{{background:#2a2820;}}
-.port-chart-card{{background:#161410;border:1px solid #2a2820;border-radius:4px;padding:22px;margin-top:20px;}}
+.dark{{background:var(--bg2);border-radius:4px;padding:28px 32px;margin-bottom:20px;}}
+.dark .sec-label{{color:var(--ink3);}}.dark .sec-label::after{{background:var(--border);}}
+.port-chart-card{{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:22px;margin-top:20px;}}
 .port-stats{{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:14px;}}
-.alloc-note{{font-size:8.5px;color:#6a6660;margin-top:10px;font-style:italic;}}
+.alloc-note{{font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic;}}
 .news-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-bottom:24px;}}
-.news-block{{background:#161410;border-radius:3px;padding:15px 17px;border-left:3px solid #3a3830;}}
+.news-block{{background:var(--card);border-radius:3px;padding:15px 17px;border-left:3px solid var(--border);}}
 .news-block.red{{border-color:#c8440a;}}.news-block.amber{{border-color:#b8920a;}}.news-block.green{{border-color:#1a7a4a;}}
 .news-tag{{font-size:8px;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;font-weight:500;}}
 .news-block.red .news-tag{{color:#c8440a;}}.news-block.amber .news-tag{{color:#b8920a;}}.news-block.green .news-tag{{color:#4aaa74;}}
-.news-head{{font-size:12px;color:#e8e4dc;font-weight:500;margin-bottom:6px;line-height:1.4;}}
-.news-body{{font-size:10px;color:#7a7670;line-height:1.65;}}
-.news-impact{{font-size:9px;margin-top:8px;padding-top:8px;border-top:1px solid #2a2820;letter-spacing:.5px;}}
+.news-head{{font-size:12px;color:var(--ink);font-weight:500;margin-bottom:6px;line-height:1.4;}}
+.news-body{{font-size:10px;color:var(--ink2);line-height:1.65;}}
+.news-impact{{font-size:9px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);letter-spacing:.5px;}}
 .news-block.red .news-impact{{color:#e87050;}}.news-block.amber .news-impact{{color:#d8a830;}}.news-block.green .news-impact{{color:#4aaa74;}}
 .ig{{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:22px;}}
-.ins{{border-left:2px solid #3a3830;padding-left:13px;}}
+.ins{{border-left:2px solid var(--border);padding-left:13px;}}
 {ins_css}
-.it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:6px;}}
-.ix{{font-size:11px;color:#bfbab2;line-height:1.75;}}
+.it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px;}}
+.ix{{font-size:11px;color:var(--ink2);line-height:1.75;}}
 footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:8.5px;color:var(--ink3);}}
 @media(max-width:1024px){{
   .cards-grid{{grid-template-columns:repeat(3,1fr);}}
@@ -1444,6 +1559,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
   </div>
 
   {corr_html}
+  {corr_ytd_html}
 
   <div class="sec-label">Verdict — {verdict_source} · Live Yahoo Finance Data + News Context{regime_badge}</div>
   <div class="verdict-row">{verdicts_html}</div>
@@ -1456,7 +1572,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
     <div class="sec-label">AI-Powered Portfolio Strategies — Allocations Recommended by Claude Based on Today's Live Data</div>
 
-    <div class="tbl-card" style="background:#1a1810;border-color:#2a2820;padding:18px 20px;margin-bottom:0">
+    <div class="tbl-card" style="padding:18px 20px;margin-bottom:0">
       <div style="overflow-x:auto">
       <table>
         <thead>
@@ -1476,13 +1592,13 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
     <div class="port-chart-card">
       <div class="chart-hdr">
-        <div><div class="chart-t" style="color:#f0ece4">10-Year Portfolio Simulation — $10,000 Lump Sum &amp; DCA · Jan {start_yr}</div>
-        <div class="chart-s" style="color:#6a6660">Annual returns from Yahoo Finance · Solid = lump sum · Dashed = DCA $1k/yr · Grey = ASX 200 benchmark · AUD</div></div>
+        <div><div class="chart-t">10-Year Portfolio Simulation — $10,000 Lump Sum &amp; DCA · Jan {start_yr}</div>
+        <div class="chart-s">Annual returns from Yahoo Finance · Solid = lump sum · Dashed = DCA $1k/yr · Grey = ASX 200 benchmark · AUD</div></div>
         <div class="legend">{port_legend}</div>
       </div>
       <canvas id="portChart" style="max-height:310px"></canvas>
       <div class="port-stats">{port_stats_html}</div>
-      {f'<div style="margin-top:12px"><div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#6a6660;margin-bottom:8px">DCA Equivalent ($1,000/year — same total invested)</div><div class="port-stats">{dca_stats_html}</div></div>' if dca_stats_html else ''}
+      {f'<div style="margin-top:12px"><div style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:8px">DCA Equivalent ($1,000/year — same total invested)</div><div class="port-stats">{dca_stats_html}</div></div>' if dca_stats_html else ''}
     </div>
   </div>
 
@@ -1507,11 +1623,11 @@ new Chart(document.getElementById('etfChart').getContext('2d'),{{
 new Chart(document.getElementById('portChart').getContext('2d'),{{
   type:'line',data:{{labels:{json.dumps(port_labels_clean)},datasets:{json.dumps(port_ds)}}},
   options:{{responsive:true,interaction:{{mode:'index',intersect:false}},
-    plugins:{{legend:{{display:false}},tooltip:{{backgroundColor:'#0e0c0a',titleColor:'#8a8680',bodyColor:'#c8c4bc',borderColor:'#2a2820',borderWidth:1,padding:13,
+    plugins:{{legend:{{display:false}},tooltip:{{backgroundColor:'#1c1916',titleColor:'#9a9690',bodyColor:'#f0ece4',borderColor:'#3a3630',borderWidth:1,padding:13,
       callbacks:{{label:c=>{{const v=c.parsed.y,g=((v/{INITIAL}-1)*100).toFixed(1),s=g>=0?'+':'';return`  ${{c.dataset.label}}: $${{Math.round(v).toLocaleString()}} (${{s}}${{g}}%)`;}}}}}}}},
-    scales:{{x:{{grid:{{color:'rgba(255,255,255,0.03)'}},ticks:{{color:'#6a6660',maxRotation:0}}}},
-      y:{{grid:{{color:'rgba(255,255,255,0.03)'}},ticks:{{color:'#6a6660',callback:v=>'$'+(v/1000).toFixed(0)+'k'}},
-        title:{{display:true,text:'Portfolio Value (AUD)',color:'#6a6660',font:{{size:9}}}}}}}}}}
+    scales:{{x:{{grid:{{color:'rgba(0,0,0,0.04)'}},ticks:{{color:'#9a9690',maxRotation:0}}}},
+      y:{{grid:{{color:'rgba(0,0,0,0.04)'}},ticks:{{color:'#9a9690',callback:v=>'$'+(v/1000).toFixed(0)+'k'}},
+        title:{{display:true,text:'Portfolio Value (AUD)',color:'#9a9690',font:{{size:9}}}}}}}}}}
 }});
 </script>
 </body>
@@ -1632,6 +1748,7 @@ def main():
 
     print("\n📊 Computing analytics (correlations, regime, drift)...")
     correlations = compute_correlations(etf_data)
+    corr_ytd     = compute_ytd_correlations(etf_data, now)
     regime       = detect_market_regime(etf_data)
     eq_drift     = compute_equal_weight_drift(etf_data)
     rlabel, rcolor, rdesc = regime
@@ -1662,7 +1779,7 @@ def main():
     print("\n🎨 Generating HTML...")
     html = generate_html(
         etf_data, portfolios, portfolio_series, now, ai_content,
-        correlations=correlations, regime=regime, dca_series=dca_series,
+        correlations=correlations, corr_ytd=corr_ytd, regime=regime, dca_series=dca_series,
         what_changed=what_changed, snapshot=snapshot,
         benchmark_series=benchmark_series, screened_pool=screened_pool,
         eq_drift=eq_drift,
