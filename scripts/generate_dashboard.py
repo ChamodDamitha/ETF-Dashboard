@@ -191,6 +191,7 @@ def fetch_all_data(now):
             vol_1y = None
             daily_rets_1y = []
             daily_rets_10y = []
+            daily_rets_10y_dates = []
             if close is not None:
                 sl = close[close.index.date >= one_year_ago]
                 if len(sl) > 20:
@@ -199,7 +200,9 @@ def fetch_all_data(now):
                     daily_rets_1y = dr.tolist()
                 sl10 = close[close.index.date >= ten_years_ago]
                 if len(sl10) > 200:
-                    daily_rets_10y = sl10.pct_change().dropna().tolist()
+                    dr10 = sl10.pct_change().dropna()
+                    daily_rets_10y       = dr10.tolist()
+                    daily_rets_10y_dates = [d.date() for d in dr10.index]
 
             # Sharpe & Sortino ratios (1Y, risk-free = RISK_FREE_RATE %)
             sharpe_1y  = None
@@ -274,8 +277,9 @@ def fetch_all_data(now):
                 "ma_50d":          ma_50d,
                 "ma_200d":         ma_200d,
                 "is_above_200ma":  is_above_200ma,
-                "daily_rets_1y":   daily_rets_1y,
-                "daily_rets_10y":  daily_rets_10y,
+                "daily_rets_1y":        daily_rets_1y,
+                "daily_rets_10y":       daily_rets_10y,
+                "daily_rets_10y_dates": daily_rets_10y_dates,
                 "w52_high":        w52_high,
                 "w52_low":         w52_low,
                 "from_high":       from_high,
@@ -297,7 +301,7 @@ def fetch_all_data(now):
             print(f"ERROR — {exc}")
             result[ticker] = {
                 **meta, "price": None, "error": str(exc),
-                "annual_returns": {}, "monthly_indexed": [], "daily_rets_1y": [], "daily_rets_10y": [],
+                "annual_returns": {}, "monthly_indexed": [], "daily_rets_1y": [], "daily_rets_10y": [], "daily_rets_10y_dates": [],
                 "one_yr_ret": None, "ytd_ret": None, "vol_1y": None,
                 "five_yr_ret": None, "ten_yr_ret": None, "twenty_yr_ret": None,
                 "sharpe_1y": None, "sortino_1y": None,
@@ -413,22 +417,61 @@ def build_portfolio_series(etf_data, portfolios, now):
 # ── STEP 3a: Analytics — correlations, regime, DCA, benchmarks ───────────────
 
 def compute_correlations(etf_data):
-    """Pairwise Pearson correlations of 10Y daily returns for all active ETFs."""
+    """
+    Per-year Pearson correlations averaged across up to 10 calendar years.
+    For each year present in the data, compute the pairwise correlation of
+    daily returns, then return the mean across all qualifying years.
+    """
+    import pandas as pd
+
     tickers = list(etf_data.keys())
-    series  = {t: etf_data[t].get("daily_rets_10y", []) for t in tickers}
-    valid   = [t for t in tickers if len(series[t]) > 200]
-    matrix  = {}
+
+    # Build a DataFrame of daily returns indexed by date, one column per ticker
+    frames = {}
+    for t in tickers:
+        rets  = etf_data[t].get("daily_rets_10y", [])
+        dates = etf_data[t].get("daily_rets_10y_dates", [])
+        if len(rets) == len(dates) and len(rets) > 200:
+            frames[t] = pd.Series(rets, index=pd.to_datetime(dates))
+
+    if not frames:
+        return {}
+
+    df = pd.DataFrame(frames).sort_index()
+    valid = list(df.columns)
+
+    years = sorted(df.index.year.unique())
+
+    # Accumulate per-year correlations
+    year_corr_sum   = {t1: {t2: 0.0 for t2 in valid} for t1 in valid}
+    year_corr_count = {t1: {t2: 0   for t2 in valid} for t1 in valid}
+
+    for yr in years:
+        yr_df = df[df.index.year == yr].dropna(how="all")
+        if len(yr_df) < 20:
+            continue
+        # Only include column pairs that both have ≥20 non-NaN obs this year
+        for t1 in valid:
+            for t2 in valid:
+                if t1 == t2:
+                    year_corr_sum[t1][t2]   += 1.0
+                    year_corr_count[t1][t2] += 1
+                    continue
+                pair = yr_df[[t1, t2]].dropna()
+                if len(pair) < 20:
+                    continue
+                corr = pair[t1].corr(pair[t2])
+                if not np.isnan(corr):
+                    year_corr_sum[t1][t2]   += corr
+                    year_corr_count[t1][t2] += 1
+
+    matrix = {}
     for t1 in valid:
         matrix[t1] = {}
         for t2 in valid:
-            if t1 == t2:
-                matrix[t1][t2] = 1.0
-            else:
-                r1 = np.array(series[t1])
-                r2 = np.array(series[t2])
-                n  = min(len(r1), len(r2))
-                corr = float(np.corrcoef(r1[-n:], r2[-n:])[0, 1])
-                matrix[t1][t2] = round(corr, 2)
+            cnt = year_corr_count[t1][t2]
+            if cnt > 0:
+                matrix[t1][t2] = round(year_corr_sum[t1][t2] / cnt, 2)
     return matrix
 
 
@@ -1207,10 +1250,10 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
             rows += f"<tr>{cells}</tr>"
         corr_html = f"""
   <div class="tbl-card" style="margin-bottom:20px">
-    <div class="sec-label">1-Year Return Correlation Matrix — Pairwise Pearson · 252 Trading Days</div>
+    <div class="sec-label">10-Year Correlation Matrix — Per-Year Pearson Averaged Across Up To 10 Calendar Years</div>
     <div style="overflow-x:auto"><table>{header}<tbody>{rows}</tbody></table></div>
     <div style="font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic">
-      Green = positive correlation (move together) · Red = negative (inverse) · Darker = stronger signal
+      Each cell = average of up to 10 annual Pearson correlations · Green = positive (move together) · Red = negative (inverse) · Darker = stronger signal
     </div>
   </div>"""
 
