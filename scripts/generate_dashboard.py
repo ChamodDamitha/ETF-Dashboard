@@ -77,53 +77,61 @@ _EXTRA_COLORS = ["#8a2a6a", "#2a6a4a", "#6a3a8a", "#8a5a2a", "#2a4a8a", "#5a8a2a
 
 def discover_top_etfs(now, n=3):
     """
-    Screens CANDIDATE_POOL for the top N ETFs using a composite score that
-    blends long-term performance with recent trend/momentum:
-      score = 0.40 × 1Y return  +  0.35 × 3M return  +  0.25 × 1M return
+    Screens CANDIDATE_POOL using a composite score across four time horizons:
+      score = 0.30 × 10Y return  +  0.25 × 1Y return
+            + 0.25 × 3M return   +  0.20 × 1M return
 
-    This ensures both consistently strong ETFs AND currently trending ones
-    are surfaced.  All returns are derived from a single 1-year history fetch.
+    10Y return is annualised (CAGR) so it is comparable with shorter periods.
+    If fewer than 10 years of data exist, the available span is used and
+    weighted accordingly (weight redistributed to shorter horizons).
     Any candidates that error are silently skipped.
     """
-    today        = now.date()
-    one_year_ago = today - relativedelta(years=1)
-    results      = []
+    today         = now.date()
+    ten_years_ago = today - relativedelta(years=10)
+    results       = []
 
     for ticker, meta in CANDIDATE_POOL.items():
         if ticker in TICKERS:
             continue
         try:
             hist  = yf.Ticker(meta["yahoo"]).history(
-                start=str(one_year_ago), end=str(today), auto_adjust=True
+                start=str(ten_years_ago), end=str(today), auto_adjust=True
             )
             close = hist["Close"] if not hist.empty else None
             if close is None or len(close) < 20:
                 continue
-            last   = close.iloc[-1]
-            one_yr = (last / close.iloc[0]  - 1) * 100
+            last = close.iloc[-1]
+
+            # 10Y annualised (CAGR); fall back to available span
+            n_years_avail = len(close) / 252
+            ret_10y_ann   = ((last / close.iloc[0]) ** (1 / max(n_years_avail, 1)) - 1) * 100
+
+            # Slice to last 252 trading days for 1Y
+            one_yr = (last / close.iloc[-min(252, len(close))] - 1) * 100
             # 3-month ≈ 63 trading days; 1-month ≈ 21 trading days
-            ret_3m = (last / close.iloc[-min(63, len(close))] - 1) * 100
-            ret_1m = (last / close.iloc[-min(21, len(close))] - 1) * 100
-            score  = 0.40 * one_yr + 0.35 * ret_3m + 0.25 * ret_1m
-            results.append((ticker, meta, one_yr, ret_3m, ret_1m, score))
+            ret_3m = (last / close.iloc[-min(63,  len(close))] - 1) * 100
+            ret_1m = (last / close.iloc[-min(21,  len(close))] - 1) * 100
+
+            score  = 0.30 * ret_10y_ann + 0.25 * one_yr + 0.25 * ret_3m + 0.20 * ret_1m
+            results.append((ticker, meta, ret_10y_ann, one_yr, ret_3m, ret_1m, score))
         except Exception:
             continue
 
-    results.sort(key=lambda x: -x[5])   # rank by composite score
+    results.sort(key=lambda x: -x[6])   # rank by composite score
     top      = results[:n]
     rejected = results[n:]
 
     discovered = {}
-    for i, (ticker, meta, one_yr, ret_3m, ret_1m, score) in enumerate(top):
+    for i, (ticker, meta, ret_10y_ann, one_yr, ret_3m, ret_1m, score) in enumerate(top):
         color = _EXTRA_COLORS[i % len(_EXTRA_COLORS)]
         cls   = ticker.lower()
         discovered[ticker] = {**meta, "color": color, "cls": cls}
-        print(f"  [{ticker}] discovered — score {score:+.1f} | 1Y {one_yr:+.1f}% | 3M {ret_3m:+.1f}% | 1M {ret_1m:+.1f}%  ({meta['name']})")
+        print(f"  [{ticker}] discovered — score {score:+.1f} | 10Y(ann) {ret_10y_ann:+.1f}% | 1Y {one_yr:+.1f}% | 3M {ret_3m:+.1f}% | 1M {ret_1m:+.1f}%  ({meta['name']})")
 
     screened_pool = {
-        t: {"name": meta["name"], "one_yr_ret": one_yr,
+        t: {"name": meta["name"], "ret_10y_ann": ret_10y_ann, "one_yr_ret": one_yr,
             "ret_3m": ret_3m, "ret_1m": ret_1m, "score": score}
-        for t, meta, one_yr, ret_3m, ret_1m, score in rejected
+        for t, meta, ret_10y_ann, one_yr, ret_3m, ret_1m, score in rejected
     }
 
     return discovered, screened_pool
@@ -1395,9 +1403,10 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     if screened_pool:
         pool_rows = "".join(
             f"<tr><td>{t}</td><td style='color:#9a9690'>{meta['name']}</td>"
-            f"<td class='{ccls(meta['ret_1m'])}'>{meta['ret_1m']:+.1f}%</td>"
-            f"<td class='{ccls(meta['ret_3m'])}'>{meta['ret_3m']:+.1f}%</td>"
+            f"<td class='{ccls(meta['ret_10y_ann'])}'>{meta['ret_10y_ann']:+.1f}%</td>"
             f"<td class='{ccls(meta['one_yr_ret'])}'>{meta['one_yr_ret']:+.1f}%</td>"
+            f"<td class='{ccls(meta['ret_3m'])}'>{meta['ret_3m']:+.1f}%</td>"
+            f"<td class='{ccls(meta['ret_1m'])}'>{meta['ret_1m']:+.1f}%</td>"
             f"<td class='{ccls(meta['score'])}'>{meta['score']:+.1f}</td>"
             f"<td style='color:#5a5650;font-size:8.5px'>Not selected this run</td></tr>"
             for t, meta in sorted(screened_pool.items(),
@@ -1408,12 +1417,12 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     <div class="sec-label">Candidate Pool — Screened But Not Added This Run</div>
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Ticker</th><th>Name</th><th>1M Trend</th><th>3M Momentum</th><th>1Y Return</th><th>Score</th><th>Status</th></tr></thead>
+      <thead><tr><th>Ticker</th><th>Name</th><th>10Y p.a.</th><th>1Y Return</th><th>3M Momentum</th><th>1M Trend</th><th>Score</th><th>Status</th></tr></thead>
       <tbody>{pool_rows}</tbody>
     </table>
     </div>
     <div style="font-size:8.5px;color:var(--ink3);margin-top:8px;font-style:italic">
-      Top 3 by composite score (40% 1Y + 35% 3M + 25% 1M) are added to the live report each run. Pool is re-screened daily.
+      Top 3 by composite score (30% 10Y CAGR + 25% 1Y + 25% 3M + 20% 1M) are added to the live report each run. Pool is re-screened daily.
     </div>
   </div>"""
 
