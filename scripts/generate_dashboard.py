@@ -30,6 +30,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import json as _json_module
+import urllib.parse
 import urllib.request
 import numpy as np
 import yfinance as yf
@@ -76,11 +77,12 @@ _EXTRA_COLORS = ["#8a2a6a", "#2a6a4a", "#6a3a8a", "#8a5a2a", "#2a4a8a", "#5a8a2a
 
 def discover_top_etfs(now, n=3):
     """
-    Screens CANDIDATE_POOL for the top N ETFs by 1-year return (excluding any
-    already present in TICKERS).  Returns a list of (ticker, meta) tuples ready
-    to be merged into TICKERS before the main data fetch.
+    Screens CANDIDATE_POOL for the top N ETFs using a composite score that
+    blends long-term performance with recent trend/momentum:
+      score = 0.40 × 1Y return  +  0.35 × 3M return  +  0.25 × 1M return
 
-    Uses a lightweight 1-year history fetch (no .info call) to keep it fast.
+    This ensures both consistently strong ETFs AND currently trending ones
+    are surfaced.  All returns are derived from a single 1-year history fetch.
     Any candidates that error are silently skipped.
     """
     today        = now.date()
@@ -97,26 +99,31 @@ def discover_top_etfs(now, n=3):
             close = hist["Close"] if not hist.empty else None
             if close is None or len(close) < 20:
                 continue
-            one_yr = (close.iloc[-1] / close.iloc[0] - 1) * 100
-            results.append((ticker, meta, one_yr))
+            last   = close.iloc[-1]
+            one_yr = (last / close.iloc[0]  - 1) * 100
+            # 3-month ≈ 63 trading days; 1-month ≈ 21 trading days
+            ret_3m = (last / close.iloc[-min(63, len(close))] - 1) * 100
+            ret_1m = (last / close.iloc[-min(21, len(close))] - 1) * 100
+            score  = 0.40 * one_yr + 0.35 * ret_3m + 0.25 * ret_1m
+            results.append((ticker, meta, one_yr, ret_3m, ret_1m, score))
         except Exception:
             continue
 
-    results.sort(key=lambda x: -x[2])
+    results.sort(key=lambda x: -x[5])   # rank by composite score
     top      = results[:n]
-    rejected = results[n:]   # candidates screened but not added this run
+    rejected = results[n:]
 
     discovered = {}
-    for i, (ticker, meta, one_yr) in enumerate(top):
+    for i, (ticker, meta, one_yr, ret_3m, ret_1m, score) in enumerate(top):
         color = _EXTRA_COLORS[i % len(_EXTRA_COLORS)]
         cls   = ticker.lower()
         discovered[ticker] = {**meta, "color": color, "cls": cls}
-        print(f"  [{ticker}] discovered — 1Y {one_yr:+.1f}%  ({meta['name']})")
+        print(f"  [{ticker}] discovered — score {score:+.1f} | 1Y {one_yr:+.1f}% | 3M {ret_3m:+.1f}% | 1M {ret_1m:+.1f}%  ({meta['name']})")
 
-    # Build screened-pool table data (ticker → {name, one_yr_ret})
     screened_pool = {
-        t: {"name": meta["name"], "one_yr_ret": ret}
-        for t, meta, ret in rejected
+        t: {"name": meta["name"], "one_yr_ret": one_yr,
+            "ret_3m": ret_3m, "ret_1m": ret_1m, "score": score}
+        for t, meta, one_yr, ret_3m, ret_1m, score in rejected
     }
 
     return discovered, screened_pool
@@ -911,7 +918,8 @@ Your task: Generate a JSON object with exactly this structure:
       "tag": "short category label (e.g. Trade Policy, Geopolitics, Monetary Policy)",
       "headline": "concise news headline (max 12 words)",
       "body": "2-3 sentence explanation of the news event and why it matters for markets (max 60 words)",
-      "impact": "1-2 sentences on which specific ETFs are affected and how (bullish/bearish)"
+      "impact": "1-2 sentences on which specific ETFs are affected and how (bullish/bearish)",
+      "source": "Primary publisher name, e.g. Reuters, Bloomberg, RBA, IMF, WSJ, AFR, CNBC"
     }},
     ... (exactly 6 news items total)
   ],
@@ -924,7 +932,9 @@ Your task: Generate a JSON object with exactly this structure:
 }}
 
 Rules:
-- News items must reflect REAL current macro themes as of {now.strftime('%B %Y')} (tariffs, central bank policy, geopolitics, tech regulation, commodities, FX)
+- News items must reflect the MOST IMPACTFUL macro events happening RIGHT NOW as of {now.strftime('%d %B %Y')} — prioritise breaking or fast-moving developments over background themes (tariffs, central bank decisions, geopolitical flashpoints, earnings surprises, commodity moves, FX shifts)
+- Each news item must be a SPECIFIC recent event, not a vague ongoing theme — name dates, countries, rates, or figures where possible
+- source: name the single most credible publisher covering this event (Reuters, Bloomberg, AFR, RBA, WSJ, CNBC, IMF, etc.)
 - Severity: red = high negative risk, amber = mixed/uncertain, green = positive catalyst
 - Insights must reference the actual YTD and 1Y return numbers provided
 - 2 red items, 2 amber items, 2 green items
@@ -1248,15 +1258,20 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
 
     news_cards_html = ""
     for item in news_items:
-        sev   = item.get("severity", "amber")
-        tag   = item.get("tag", "")
-        head  = item.get("headline", "")
-        body  = item.get("body", "")
-        impact= item.get("impact", "")
-        icon  = {"red": "🔴", "amber": "🟡", "green": "🟢"}.get(sev, "⚪")
+        sev    = item.get("severity", "amber")
+        tag    = item.get("tag", "")
+        head   = item.get("headline", "")
+        body   = item.get("body", "")
+        impact = item.get("impact", "")
+        source = item.get("source", "")
+        icon   = {"red": "🔴", "amber": "🟡", "green": "🟢"}.get(sev, "⚪")
+        src_q  = urllib.parse.quote_plus(f"{head} {source}".strip())
+        src_url = f"https://news.google.com/search?q={src_q}&hl=en-AU&gl=AU&ceid=AU:en"
+        src_html = (f'<a href="{src_url}" target="_blank" rel="noopener" class="news-src">'
+                    f'↗ {source}</a>') if source else ""
         news_cards_html += f"""
       <div class="news-block {sev}">
-        <div class="news-tag">{icon} {tag}</div>
+        <div class="news-tag">{icon} {tag}{("&ensp;" + src_html) if src_html else ""}</div>
         <div class="news-head">{head}</div>
         <div class="news-body">{body}</div>
         <div class="news-impact">⚡ {impact}</div>
@@ -1380,22 +1395,25 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     if screened_pool:
         pool_rows = "".join(
             f"<tr><td>{t}</td><td style='color:#9a9690'>{meta['name']}</td>"
+            f"<td class='{ccls(meta['ret_1m'])}'>{meta['ret_1m']:+.1f}%</td>"
+            f"<td class='{ccls(meta['ret_3m'])}'>{meta['ret_3m']:+.1f}%</td>"
             f"<td class='{ccls(meta['one_yr_ret'])}'>{meta['one_yr_ret']:+.1f}%</td>"
+            f"<td class='{ccls(meta['score'])}'>{meta['score']:+.1f}</td>"
             f"<td style='color:#5a5650;font-size:8.5px'>Not selected this run</td></tr>"
             for t, meta in sorted(screened_pool.items(),
-                                  key=lambda x: -x[1]["one_yr_ret"])
+                                  key=lambda x: -x[1]["score"])
         )
         screened_html = f"""
   <div class="tbl-card" style="margin-top:20px">
     <div class="sec-label">Candidate Pool — Screened But Not Added This Run</div>
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Ticker</th><th>Name</th><th>1Y Return</th><th>Status</th></tr></thead>
+      <thead><tr><th>Ticker</th><th>Name</th><th>1M Trend</th><th>3M Momentum</th><th>1Y Return</th><th>Score</th><th>Status</th></tr></thead>
       <tbody>{pool_rows}</tbody>
     </table>
     </div>
     <div style="font-size:8.5px;color:var(--ink3);margin-top:8px;font-style:italic">
-      Top 3 by 1Y return are added to the live report each run. Pool is re-screened daily.
+      Top 3 by composite score (40% 1Y + 35% 3M + 25% 1M) are added to the live report each run. Pool is re-screened daily.
     </div>
   </div>"""
 
@@ -1489,6 +1507,9 @@ tr:last-child td{{border-bottom:none;}}
 .news-head{{font-size:12px;color:var(--ink);font-weight:500;margin-bottom:6px;line-height:1.4;}}
 .news-body{{font-size:10px;color:var(--ink2);line-height:1.65;}}
 .news-impact{{font-size:9px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);letter-spacing:.5px;}}
+.news-src{{font-size:7.5px;letter-spacing:.5px;text-decoration:none;opacity:.7;font-weight:400;}}
+.news-src:hover{{opacity:1;text-decoration:underline;}}
+.news-block.red .news-src{{color:#c8440a;}}.news-block.amber .news-src{{color:#b8920a;}}.news-block.green .news-src{{color:#1a7a4a;}}
 .news-block.red .news-impact{{color:#e87050;}}.news-block.amber .news-impact{{color:#d8a830;}}.news-block.green .news-impact{{color:#4aaa74;}}
 .ig{{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:22px;}}
 .ins{{border-left:2px solid var(--border);padding-left:13px;}}
