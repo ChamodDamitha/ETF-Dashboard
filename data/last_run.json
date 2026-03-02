@@ -3,9 +3,9 @@
   "etf_data": {
     "IVV": {
       "price": 64.1,
-      "one_yr_ret": 1.9750981834122605,
+      "one_yr_ret": 1.9751043374204968,
       "ytd_ret": -5.636068821139551,
-      "vol_1y": 16.660055893947526,
+      "vol_1y": 16.660058540235422,
       "sharpe_1y": -0.12,
       "sortino_1y": -0.16,
       "max_drawdown": -95.6,
@@ -25,9 +25,9 @@
     },
     "VAS": {
       "price": 114.22,
-      "one_yr_ret": 15.277408666673086,
+      "one_yr_ret": 15.277417549284266,
       "ytd_ret": 5.431366282460259,
-      "vol_1y": 12.564632298757239,
+      "vol_1y": 12.564635839147101,
       "sharpe_1y": 0.9,
       "sortino_1y": 1.15,
       "max_drawdown": -35.8,
@@ -60,7 +60,7 @@
       "price": 146.73,
       "one_yr_ret": 5.69465686219881,
       "ytd_ret": -3.655117719545642,
-      "vol_1y": 14.101849154178206,
+      "vol_1y": 14.10184830034839,
       "sharpe_1y": 0.12,
       "sortino_1y": 0.16,
       "max_drawdown": -23.4,
@@ -93,7 +93,7 @@
       "price": 16.45,
       "one_yr_ret": 51.006319996583095,
       "ytd_ret": 11.938301172782761,
-      "vol_1y": 24.293359743964086,
+      "vol_1y": 24.29337044128129,
       "sharpe_1y": 1.93,
       "sortino_1y": 2.55,
       "max_drawdown": -59.6,
@@ -105,11 +105,11 @@
     "IVV": "Accumulate",
     "FANG": "Watch",
     "VAS": "Buy",
-    "QAU": "Strong Buy",
-    "GOLD": "Buy",
-    "VGS": "Accumulate",
-    "GDX": "Buy",
-    "SEMI": "Hold",
-    "ASIA": "Accumulate"
+    "QAU": "Buy",
+    "GOLD": "Accumulate",
+    "VGS": "Watch",
+    "GDX": "Accumulate",
+    "SEMI": "Accumulate",
+    "ASIA": "Hold"
   }
 }
