@@ -22,7 +22,8 @@ Dependencies: yfinance>=0.2.36, python-dateutil>=2.8.2, numpy>=1.24
 import json
 import os
 import smtplib
-from datetime import datetime, date
+import yaml
+from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -1048,12 +1049,361 @@ def ccls(v):  return "up" if (v or 0) > 0 else ("dn" if (v or 0) < 0 else "neu")
 def arrow(v): return "▲" if (v or 0) > 0 else "▼"
 
 
+# ── Personal portfolio ────────────────────────────────────────────────────────
+
+_PORTFOLIO_FALLBACK_COLORS = [
+    "#7a3aaa", "#c43060", "#0a8a6a", "#cc7700", "#334488", "#885522",
+]
+
+
+def _color_for_ticker(yahoo_ticker):
+    """Return a chart color for a ticker, reusing existing ETF colors where possible."""
+    display = yahoo_ticker.upper().replace(".AX", "")
+    for t, meta in TICKERS.items():
+        if t == display or meta.get("yahoo", "").upper() == yahoo_ticker.upper():
+            return meta["color"]
+    idx = sum(ord(c) for c in yahoo_ticker) % len(_PORTFOLIO_FALLBACK_COLORS)
+    return _PORTFOLIO_FALLBACK_COLORS[idx]
+
+
+def load_portfolio_config():
+    """Load holdings from portfolios.yaml in the repo root. Returns [] if absent or invalid."""
+    cfg_path = Path(__file__).parent.parent / "portfolios.yaml"
+    if not cfg_path.exists():
+        return []
+    try:
+        with open(cfg_path) as fh:
+            cfg = yaml.safe_load(fh)
+        raw = cfg.get("holdings", []) if cfg else []
+        out = []
+        for h in raw:
+            if not all(k in h for k in ("ticker", "units", "purchase_date")):
+                print(f"  [portfolio] skipping incomplete entry: {h}")
+                continue
+            out.append({
+                "ticker":         str(h["ticker"]),
+                "units":          float(h["units"]),
+                "purchase_date":  str(h["purchase_date"]),
+                "purchase_price": float(h["purchase_price"]) if h.get("purchase_price") else None,
+            })
+        return out
+    except Exception as exc:
+        print(f"  [portfolio] failed to load portfolios.yaml: {exc}")
+        return []
+
+
+def build_holdings_data(holdings, now):
+    """
+    Fetch daily price history for each holding and compute metrics.
+
+    Returns a dict with:
+      dates         — list of date-label strings (x-axis)
+      holdings      — list of per-holding dicts (stats + Chart.js values array)
+      total_series  — list of daily total portfolio values (None before first purchase)
+      total_cost_basis, total_current_value, total_gain, total_gain_pct
+    Returns None if no data could be fetched.
+    """
+    if not holdings:
+        return None
+
+    today = now.date()
+    try:
+        earliest = min(date.fromisoformat(str(h["purchase_date"])) for h in holdings)
+    except Exception:
+        return None
+
+    # Fetch daily close for every unique ticker from the earliest purchase date
+    ticker_series = {}
+    for h in holdings:
+        yahoo = h["ticker"]
+        if yahoo in ticker_series:
+            continue
+        try:
+            hist = yf.Ticker(yahoo).history(
+                start=str(earliest - timedelta(days=7)),
+                end=str(today),
+                auto_adjust=True,
+            )
+            if not hist.empty:
+                # Normalise index to plain date objects for comparison
+                close = hist["Close"].copy()
+                close.index = [d.date() if hasattr(d, "date") else d for d in close.index]
+                ticker_series[yahoo] = close
+        except Exception as exc:
+            print(f"  [portfolio] could not fetch {yahoo}: {exc}")
+
+    if not ticker_series:
+        return None
+
+    # Union of all trading-day dates across all fetched series
+    all_dates = sorted({d for s in ticker_series.values() for d in s.index})
+
+    holding_objs = []
+    total_cost_basis    = 0.0
+    total_current_value = 0.0
+    total_by_date: dict[date, float] = {}
+
+    for h in holdings:
+        yahoo = h["ticker"]
+        if yahoo not in ticker_series:
+            continue
+
+        series         = ticker_series[yahoo]
+        price_by_date  = series.to_dict()
+        purchase_date  = date.fromisoformat(str(h["purchase_date"]))
+        units          = h["units"]
+
+        # Resolve purchase price: explicit override or first close on/after purchase_date
+        if h["purchase_price"] is not None:
+            purchase_price = h["purchase_price"]
+        else:
+            future = [d for d in sorted(price_by_date) if d >= purchase_date]
+            if not future:
+                print(f"  [portfolio] no price data on/after {purchase_date} for {yahoo} — skipping")
+                continue
+            purchase_price = float(price_by_date[future[0]])
+
+        current_price  = float(series.iloc[-1])
+        cost_basis     = units * purchase_price
+        current_value  = units * current_price
+        gain           = current_value - cost_basis
+        gain_pct       = gain / cost_basis * 100
+        total_cost_basis    += cost_basis
+        total_current_value += current_value
+
+        # Build a daily value array aligned to all_dates (None before purchase)
+        last_price = None
+        values_arr = []
+        for dt in all_dates:
+            if dt < purchase_date:
+                values_arr.append(None)
+                continue
+            if dt in price_by_date:
+                last_price = float(price_by_date[dt])
+            if last_price is None:
+                values_arr.append(None)
+                continue
+            val = round(last_price * units, 2)
+            values_arr.append(val)
+            total_by_date[dt] = total_by_date.get(dt, 0.0) + val
+
+        holding_objs.append({
+            "ticker":         yahoo,
+            "display":        yahoo.replace(".AX", ""),
+            "units":          units,
+            "purchase_date":  purchase_date.strftime("%d %b %Y"),
+            "purchase_price": purchase_price,
+            "current_price":  current_price,
+            "cost_basis":     cost_basis,
+            "current_value":  current_value,
+            "gain":           gain,
+            "gain_pct":       gain_pct,
+            "values":         values_arr,
+            "color":          _color_for_ticker(yahoo),
+        })
+
+    if not holding_objs:
+        return None
+
+    total_gain     = total_current_value - total_cost_basis
+    total_gain_pct = (total_gain / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
+
+    # Total portfolio series — None where no holdings are active yet
+    total_series = [
+        round(total_by_date[dt], 2) if (dt in total_by_date and total_by_date[dt] > 0) else None
+        for dt in all_dates
+    ]
+
+    # Date labels — monthly for long spans, weekly-ish for shorter ones
+    n = len(all_dates)
+    if n > 504:           # > ~2 years → one label per month
+        date_labels, prev_m = [], None
+        for d in all_dates:
+            if d.month != prev_m:
+                date_labels.append(d.strftime("%b '%y"))
+                prev_m = d.month
+            else:
+                date_labels.append("")
+    elif n > 126:         # > ~6 months → bi-weekly labels
+        date_labels = [d.strftime("%d %b '%y") if i % 10 == 0 else "" for i, d in enumerate(all_dates)]
+    else:
+        date_labels = [d.strftime("%d %b") for d in all_dates]
+
+    return {
+        "dates":               date_labels,
+        "holdings":            holding_objs,
+        "total_series":        total_series,
+        "total_cost_basis":    total_cost_basis,
+        "total_current_value": total_current_value,
+        "total_gain":          total_gain,
+        "total_gain_pct":      total_gain_pct,
+    }
+
+
+def render_portfolio_section(hd):
+    """
+    Render the personal portfolio HTML section and its Chart.js initialisation JS.
+    Returns (html_str, js_str).  Both are empty strings when hd is None.
+    """
+    if not hd or not hd["holdings"]:
+        return "", ""
+
+    gc   = "up" if hd["total_gain"] >= 0 else "dn"
+    sign = "+" if hd["total_gain"] >= 0 else ""
+
+    # ── Stat cards ────────────────────────────────────────────────────────────
+    stat_cards = (
+        f'<div class="port-stats" style="margin:16px 0 8px">'
+        f'<div style="background:var(--bg2);border-radius:3px;padding:14px 16px;border-left:2px solid var(--border)">'
+        f'<div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">Total Invested</div>'
+        f'<div style="font-family:\'Fraunces\',serif;font-size:22px;font-weight:900;color:var(--ink);letter-spacing:-1px">A${hd["total_cost_basis"]:,.0f}</div></div>'
+        f'<div style="background:var(--bg2);border-radius:3px;padding:14px 16px;border-left:2px solid var(--border)">'
+        f'<div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">Current Value</div>'
+        f'<div style="font-family:\'Fraunces\',serif;font-size:22px;font-weight:900;color:var(--ink);letter-spacing:-1px">A${hd["total_current_value"]:,.0f}</div></div>'
+        f'<div style="background:var(--bg2);border-radius:3px;padding:14px 16px;border-left:2px solid var(--border)">'
+        f'<div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">Total Gain / Loss</div>'
+        f'<div style="font-family:\'Fraunces\',serif;font-size:22px;font-weight:900;letter-spacing:-1px" class="{gc}">{sign}A${abs(hd["total_gain"]):,.0f} ({sign}{hd["total_gain_pct"]:.1f}%)</div></div>'
+        f'</div>'
+    )
+
+    # ── Holdings table ────────────────────────────────────────────────────────
+    rows = ""
+    for h in hd["holdings"]:
+        hgc  = "up" if h["gain"] >= 0 else "dn"
+        hsgn = "+" if h["gain"] >= 0 else ""
+        dot  = f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{h["color"]};margin-right:6px;vertical-align:middle"></span>'
+        rows += (
+            f"<tr>"
+            f"<td>{dot}<strong>{h['display']}</strong></td>"
+            f"<td style='color:var(--ink2)'>{h['units']:g} units</td>"
+            f"<td style='color:var(--ink2)'>{h['purchase_date']}</td>"
+            f"<td style='color:var(--ink2)'>A${h['purchase_price']:,.2f}</td>"
+            f"<td style='color:var(--ink2)'>A${h['current_price']:,.2f}</td>"
+            f"<td>A${h['cost_basis']:,.0f}</td>"
+            f"<td>A${h['current_value']:,.0f}</td>"
+            f"<td class='{hgc}'>{hsgn}A${abs(h['gain']):,.0f}&nbsp;({hsgn}{h['gain_pct']:.1f}%)</td>"
+            f"</tr>"
+        )
+
+    # ── Legend buttons (same style as etf / port charts) ─────────────────────
+    legend = "".join(
+        f'<button class="li li-tog" onclick="toggleHoldingLine(this,\'{h["display"]}\')">'
+        f'<span class="ld" style="background:{h["color"]}"></span>'
+        f'<span style="color:var(--ink)">{h["display"]}</span></button>'
+        for h in hd["holdings"]
+    )
+    legend += (
+        '<button class="li li-tog" onclick="toggleHoldingLine(this,\'Total\')">'
+        '<span class="ld" style="background:var(--ink)"></span>'
+        '<span style="color:var(--ink)">Total</span></button>'
+    )
+
+    # ── Chart.js datasets ─────────────────────────────────────────────────────
+    datasets = [
+        {
+            "label":             h["display"],
+            "data":              h["values"],
+            "borderColor":       h["color"],
+            "borderWidth":       2,
+            "pointRadius":       0,
+            "pointHoverRadius":  4,
+            "tension":           0.3,
+            "fill":              False,
+            "spanGaps":          False,
+        }
+        for h in hd["holdings"]
+    ]
+    datasets.append({
+        "label":            "Total",
+        "data":             hd["total_series"],
+        "borderColor":      "#1c1916",
+        "borderWidth":      3,
+        "pointRadius":      0,
+        "pointHoverRadius": 5,
+        "tension":          0.3,
+        "fill":             False,
+        "spanGaps":         False,
+    })
+
+    labels_json   = json.dumps(hd["dates"])
+    datasets_json = json.dumps(datasets)
+
+    html = f"""
+  <div class="tbl-card" style="margin-top:24px">
+    <div class="sec-label">My Portfolio — Holdings</div>
+    <div class="chart-hdr" style="margin-bottom:4px">
+      <div>
+        <div class="chart-t">Daily Value Since Purchase Date</div>
+        <div class="chart-s">Configured in portfolios.yaml · Prices from Yahoo Finance · AUD · Total line includes only holdings active on each date</div>
+      </div>
+      <div class="legend">{legend}</div>
+    </div>
+    <canvas id="holdingsChart" style="max-height:300px;margin:10px 0 4px"></canvas>
+    {stat_cards}
+    <div style="margin-top:18px;overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Ticker</th><th>Units</th><th>Purchased</th>
+            <th>Buy Price</th><th>Current Price</th>
+            <th>Cost Basis</th><th>Market Value</th><th>Gain / Loss</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+    <div style="font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic">
+      Edit <code>portfolios.yaml</code> in the repo root to add, remove, or change holdings.
+      Purchase price defaults to the historical closing price on the purchase date if not specified.
+    </div>
+  </div>"""
+
+    js = f"""
+function toggleHoldingLine(btn,label){{
+  if(!window._holdingsChart)return;
+  window._holdingsChart.data.datasets.forEach(ds=>{{if(ds.label===label)ds.hidden=!ds.hidden;}});
+  window._holdingsChart.update();
+  btn.classList.toggle('line-hidden');
+}}
+window._holdingsChart=new Chart(document.getElementById('holdingsChart').getContext('2d'),{{
+  type:'line',
+  data:{{labels:{labels_json},datasets:{datasets_json}}},
+  options:{{
+    responsive:true,
+    interaction:{{mode:'index',intersect:false}},
+    plugins:{{
+      legend:{{display:false}},
+      tooltip:{{
+        backgroundColor:'#1c1916',titleColor:'#9a9690',bodyColor:'#f0ece4',
+        borderColor:'#3a3630',borderWidth:1,padding:11,
+        callbacks:{{
+          label:c=>{{
+            if(c.parsed.y==null)return null;
+            return` ${{c.dataset.label}}: A$${{c.parsed.y.toLocaleString(undefined,{{minimumFractionDigits:0,maximumFractionDigits:0}})}}`;
+          }}
+        }}
+      }}
+    }},
+    scales:{{
+      x:{{grid:{{color:'rgba(0,0,0,0.04)'}},ticks:{{color:'#9a9690',maxRotation:0,autoSkip:true,maxTicksLimit:14}}}},
+      y:{{
+        grid:{{color:'rgba(0,0,0,0.04)'}},
+        ticks:{{color:'#9a9690',callback:v=>'A$'+v.toLocaleString(undefined,{{maximumFractionDigits:0}})}},
+        title:{{display:true,text:'Value (AUD)',color:'#9a9690',font:{{size:9}}}}
+      }}
+    }}
+  }}
+}});"""
+
+    return html, js
+
+
 # ── HTML generation ──────────────────────────────────────────────────────────
 
 def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
                   correlations=None, corr_ytd=None, regime=None, dca_series=None,
                   what_changed=None, snapshot=None, benchmark_series=None,
-                  screened_pool=None, eq_drift=None):
+                  screened_pool=None, eq_drift=None, holdings_data=None):
     tickers   = list(etf_data.keys())
     today     = now.date()
     today_str = now.strftime("%d %B %Y, %I:%M %p AEST")
@@ -1426,6 +1776,9 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     </div>
   </div>"""
 
+    # ── Personal portfolio section ────────────────────────────────────────────
+    portfolio_html, portfolio_js = render_portfolio_section(holdings_data)
+
     # ── What Changed banner ───────────────────────────────────────────────────
     whatchanged_html = ""
     if what_changed:
@@ -1647,6 +2000,8 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
 
   {screened_html}
 
+  {portfolio_html}
+
 </div>
 <footer>
   <span>Generated {today_str} · Zero hardcoded values · Prices, returns, volatility all live from Yahoo Finance · Portfolio strategies powered by Claude AI</span>
@@ -1681,6 +2036,7 @@ window._portChart=new Chart(document.getElementById('portChart').getContext('2d'
       y:{{grid:{{color:'rgba(0,0,0,0.04)'}},ticks:{{color:'#9a9690',callback:v=>'$'+(v/1000).toFixed(0)+'k'}},
         title:{{display:true,text:'Portfolio Value (AUD)',color:'#9a9690',font:{{size:9}}}}}}}}}}
 }});
+{portfolio_js}
 </script>
 </body>
 </html>"""
@@ -1825,6 +2181,23 @@ def main():
     ai_content   = fetch_ai_news(etf_data, now, regime=regime)
     what_changed = generate_whatchanged_summary(etf_data, snapshot, ai_content, now)
 
+    print("\n📁 Loading portfolio holdings from portfolios.yaml...")
+    holdings = load_portfolio_config()
+    holdings_data = None
+    if holdings:
+        print(f"  Found {len(holdings)} holding(s) — fetching price history...")
+        holdings_data = build_holdings_data(holdings, now)
+        if holdings_data:
+            hd = holdings_data
+            print(f"  Total invested: A${hd['total_cost_basis']:,.0f}  "
+                  f"Current value: A${hd['total_current_value']:,.0f}  "
+                  f"Gain: {'+' if hd['total_gain'] >= 0 else ''}A${hd['total_gain']:,.0f} "
+                  f"({'+' if hd['total_gain_pct'] >= 0 else ''}{hd['total_gain_pct']:.1f}%)")
+        else:
+            print("  Could not build holdings data — portfolio section will be hidden.")
+    else:
+        print("  No portfolios.yaml found or file is empty — portfolio section skipped.")
+
     print("\n💾 Saving snapshot...")
     save_snapshot(etf_data, ai_content, now)
 
@@ -1834,7 +2207,7 @@ def main():
         correlations=correlations, corr_ytd=corr_ytd, regime=regime, dca_series=dca_series,
         what_changed=what_changed, snapshot=snapshot,
         benchmark_series=benchmark_series, screened_pool=screened_pool,
-        eq_drift=eq_drift,
+        eq_drift=eq_drift, holdings_data=holdings_data,
     )
 
     out = Path(__file__).parent.parent / "output"

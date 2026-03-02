@@ -1,0 +1,36 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# My ETF Portfolio Holdings
+# ──────────────────────────────────────────────────────────────────────────────
+# Each holding requires:
+#   ticker        — Yahoo Finance ticker symbol (e.g. IVV.AX, VAS.AX)
+#   units         — Number of units held
+#   purchase_date — Date you purchased, in YYYY-MM-DD format
+#
+# Optional:
+#   purchase_price — Price paid per unit in AUD.
+#                    If omitted, the historical closing price on purchase_date
+#                    is used automatically.
+#
+# The dashboard will show:
+#   • A daily line chart of each holding's value from its purchase date
+#   • A bold "Total Portfolio" line combining all holdings
+#   • Gain / loss and % return per holding and for the whole portfolio
+# ──────────────────────────────────────────────────────────────────────────────
+
+holdings:
+  - ticker: IVV.AX
+    units: 15
+    purchase_date: "2021-03-10"
+    # purchase_price: 72.50   # uncomment to override historical price
+
+  - ticker: VAS.AX
+    units: 40
+    purchase_date: "2020-07-01"
+
+  - ticker: FANG.AX
+    units: 8
+    purchase_date: "2022-01-15"
+
+  - ticker: QAU.AX
+    units: 25
+    purchase_date: "2023-05-20"
