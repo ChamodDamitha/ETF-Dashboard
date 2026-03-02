@@ -5,7 +5,7 @@
       "price": 64.1,
       "one_yr_ret": 1.9751043374204968,
       "ytd_ret": -5.636068821139551,
-      "vol_1y": 16.660058540235422,
+      "vol_1y": 16.660060899561863,
       "sharpe_1y": -0.12,
       "sortino_1y": -0.16,
       "max_drawdown": -95.6,
@@ -25,9 +25,9 @@
     },
     "VAS": {
       "price": 114.22,
-      "one_yr_ret": 15.277417549284266,
+      "one_yr_ret": 15.277408666673086,
       "ytd_ret": 5.431366282460259,
-      "vol_1y": 12.564635839147101,
+      "vol_1y": 12.564636942261412,
       "sharpe_1y": 0.9,
       "sortino_1y": 1.15,
       "max_drawdown": -35.8,
@@ -60,7 +60,7 @@
       "price": 146.73,
       "one_yr_ret": 5.69465686219881,
       "ytd_ret": -3.655117719545642,
-      "vol_1y": 14.10184830034839,
+      "vol_1y": 14.101849154178206,
       "sharpe_1y": 0.12,
       "sortino_1y": 0.16,
       "max_drawdown": -23.4,
@@ -82,7 +82,7 @@
       "price": 26.12,
       "one_yr_ret": 69.1796060245059,
       "ytd_ret": 13.279251068404353,
-      "vol_1y": 32.75752992785242,
+      "vol_1y": 32.757530862661135,
       "sharpe_1y": 1.99,
       "sortino_1y": 2.76,
       "max_drawdown": -38.9,
@@ -102,14 +102,14 @@
     }
   },
   "verdicts": {
-    "IVV": "Accumulate",
+    "IVV": "Watch",
     "FANG": "Watch",
-    "VAS": "Buy",
+    "VAS": "Accumulate",
     "QAU": "Buy",
-    "GOLD": "Accumulate",
-    "VGS": "Watch",
-    "GDX": "Accumulate",
+    "GOLD": "Buy",
+    "VGS": "Hold",
+    "GDX": "Strong Buy",
     "SEMI": "Accumulate",
-    "ASIA": "Hold"
+    "ASIA": "Accumulate"
   }
 }
