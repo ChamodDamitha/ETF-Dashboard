@@ -1330,40 +1330,12 @@ def render_portfolio_section(hd):
         for p in portfolios
     ]
 
-    # Individual ETF holding lines (hidden by default, toggleable)
-    for p in portfolios:
-        for h in p["holdings"]:
-            if not h.get("holding_series"):
-                continue
-            label = f"{p['name']} \u00b7 {h['display']}"
-            chart_datasets.append({
-                "label":            label,
-                "data":             h["holding_series"],
-                "borderColor":      h["color"],
-                "borderWidth":      1.5,
-                "pointRadius":      0,
-                "pointHoverRadius": 4,
-                "tension":          0.3,
-                "fill":             False,
-                "spanGaps":         True,
-                "borderDash":       [4, 3],
-                "hidden":           True,
-            })
-
     chart_legend = "".join(
         f'<button class="li li-tog" onclick="toggleHoldingLine(this,\'{p["name"]}\')">'
         f'<span class="ld" style="background:{p["color"]}"></span>'
         f'<span style="color:var(--ink)">{p["name"]}</span></button>'
         for p in portfolios
     )
-    for p in portfolios:
-        for h in p["holdings"]:
-            label = f"{p['name']} \u00b7 {h['display']}"
-            chart_legend += (
-                f'<button class="li li-tog line-hidden" onclick="toggleHoldingLine(this,\'{label}\')">'
-                f'<span class="ld" style="background:{h["color"]};border-style:dashed"></span>'
-                f'<span style="color:var(--ink2)">{h["display"]}</span></button>'
-            )
 
     # ── Per-portfolio breakdown sections ──────────────────────────────────────
     portfolio_sections = ""

@@ -71,3 +71,47 @@ portfolios:
         units: 43.03
         purchase_date: "2025-07-01"
         purchase_price: 46.48
+
+  # ── Single-ETF comparison portfolios — A$10,000 each · purchased 2025-07-01 ─
+  # Each holds 100% of one ETF so you can compare pure-ETF performance
+  # against your mixed portfolios in the same chart.
+
+  - name: 100% IVV
+    color: "#4a6ad8"
+    holdings:
+      - ticker: IVV.AX
+        units: 159.60
+        purchase_date: "2025-07-01"
+        purchase_price: 62.66
+
+  - name: 100% FANG
+    color: "#b8920a"
+    holdings:
+      - ticker: FANG.AX
+        units: 303.21
+        purchase_date: "2025-07-01"
+        purchase_price: 32.98
+
+  - name: 100% VAS
+    color: "#7a3aaa"
+    holdings:
+      - ticker: VAS.AX
+        units: 94.62
+        purchase_date: "2025-07-01"
+        purchase_price: 105.68
+
+  - name: 100% GOLD
+    color: "#c43060"
+    holdings:
+      - ticker: GOLD.AX
+        units: 215.14
+        purchase_date: "2025-07-01"
+        purchase_price: 46.48
+
+  - name: 100% ASIA
+    color: "#0a6a8a"
+    holdings:
+      - ticker: ASIA.AX
+        units: 843.17
+        purchase_date: "2025-07-01"
+        purchase_price: 11.86
