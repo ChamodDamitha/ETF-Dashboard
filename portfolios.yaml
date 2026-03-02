@@ -1,56 +1,73 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # My ETF Portfolios
 # ──────────────────────────────────────────────────────────────────────────────
-# Define one or more named portfolios. Each portfolio has its own holdings.
-# The dashboard will show:
-#   • A combined chart — one total-value line per portfolio (overlaid)
-#   • Per-portfolio stat cards — Total Invested, Current Value, Gain/Loss
-#   • Per-portfolio holdings table — buy price, current price, gain/loss
+# Each portfolio has a name, optional color, and a list of holdings.
 #
-# Each holding requires:
-#   ticker        — Yahoo Finance symbol (e.g. IVV.AX, VAS.AX, FANG.AX)
+# Required per holding:
+#   ticker        — Yahoo Finance symbol (e.g. IVV.AX, VAS.AX)
 #   units         — Number of units held
-#   purchase_date — YYYY-MM-DD — cost basis is the closing price on this date
+#   purchase_date — YYYY-MM-DD
 #
-# Optional per-holding:
-#   purchase_price — Override the historical closing price (AUD per unit)
+# Optional per holding:
+#   purchase_price — Override the historical closing price used for cost basis
 #
-# Optional per-portfolio:
+# Optional per portfolio:
 #   color — Hex color for this portfolio's chart line (auto-assigned if omitted)
 # ──────────────────────────────────────────────────────────────────────────────
 
 portfolios:
 
-  - name: Growth
+  # Portfolio 1 — A$10,000 total
+  # IVV 40% · FANG 20% · VAS 20% · GOLD 10% · ASIA 10%
+  - name: Portfolio 1
     color: "#c8440a"
     holdings:
-      - ticker: FANG.AX
-        units: 8
-        purchase_date: "2022-01-15"
-
       - ticker: IVV.AX
-        units: 15
-        purchase_date: "2021-03-10"
-        # purchase_price: 72.50   # uncomment to override historical price
+        units: 57.14
+        purchase_date: "2025-01-01"
+        purchase_price: 70.00   # 40% × A$10,000 = A$4,000 / A$70 = 57.14 units
 
-  - name: Conservative
+      - ticker: FANG.AX
+        units: 30.77
+        purchase_date: "2025-01-01"
+        purchase_price: 65.00   # 20% × A$10,000 = A$2,000 / A$65 = 30.77 units
+
+      - ticker: VAS.AX
+        units: 20.00
+        purchase_date: "2025-01-01"
+        purchase_price: 100.00  # 20% × A$10,000 = A$2,000 / A$100 = 20 units
+
+      - ticker: GOLD.AX
+        units: 33.33
+        purchase_date: "2025-01-01"
+        purchase_price: 30.00   # 10% × A$10,000 = A$1,000 / A$30 = 33.33 units
+
+      - ticker: ASIA.AX
+        units: 90.91
+        purchase_date: "2025-01-01"
+        purchase_price: 11.00   # 10% × A$10,000 = A$1,000 / A$11 = 90.91 units
+
+  # Portfolio 2 — A$10,000 total
+  # IVV 30% · FANG 20% · VAS 30% · GOLD 20%
+  - name: Portfolio 2
     color: "#1a7a4a"
     holdings:
-      - ticker: VAS.AX
-        units: 40
-        purchase_date: "2020-07-01"
+      - ticker: IVV.AX
+        units: 42.86
+        purchase_date: "2025-01-01"
+        purchase_price: 70.00   # 30% × A$10,000 = A$3,000 / A$70 = 42.86 units
 
-      - ticker: QAU.AX
-        units: 25
-        purchase_date: "2023-05-20"
-
-  - name: Speculative
-    color: "#4a6ad8"
-    holdings:
       - ticker: FANG.AX
-        units: 5
-        purchase_date: "2023-11-01"
+        units: 30.77
+        purchase_date: "2025-01-01"
+        purchase_price: 65.00   # 20% × A$10,000 = A$2,000 / A$65 = 30.77 units
 
-      - ticker: SEMI.AX
-        units: 20
-        purchase_date: "2024-02-10"
+      - ticker: VAS.AX
+        units: 30.00
+        purchase_date: "2025-01-01"
+        purchase_price: 100.00  # 30% × A$10,000 = A$3,000 / A$100 = 30 units
+
+      - ticker: GOLD.AX
+        units: 66.67
+        purchase_date: "2025-01-01"
+        purchase_price: 30.00   # 20% × A$10,000 = A$2,000 / A$30 = 66.67 units
