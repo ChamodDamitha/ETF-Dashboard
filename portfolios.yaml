@@ -115,3 +115,231 @@ portfolios:
         units: 843.17
         purchase_date: "2025-07-01"
         purchase_price: 11.86
+
+  # ── Scenario portfolios — A$10,000 each · purchased 2025-07-01 ────────────
+
+  # Ultra-growth tech — A$10,000 total · purchased 2025-07-01
+  # IVV 50% · FANG 30% · ASIA 20%
+  - name: Ultra-growth tech
+    color: "#e0406a"
+    holdings:
+      - ticker: IVV.AX
+        units: 79.80
+        purchase_date: "2025-07-01"
+        purchase_price: 62.66
+
+      - ticker: FANG.AX
+        units: 90.96
+        purchase_date: "2025-07-01"
+        purchase_price: 32.98
+
+      - ticker: ASIA.AX
+        units: 168.63
+        purchase_date: "2025-07-01"
+        purchase_price: 11.86
+
+  # Balanced global core — A$10,000 total · purchased 2025-07-01
+  # VGS 35% · IVV 30% · VAS 20% · ASIA 10% · GOLD 5%
+  - name: Balanced global core
+    color: "#0aaa96"
+    holdings:
+      - ticker: VGS.AX
+        units: 24.83
+        purchase_date: "2025-07-01"
+        purchase_price: 140.98
+
+      - ticker: IVV.AX
+        units: 47.88
+        purchase_date: "2025-07-01"
+        purchase_price: 62.66
+
+      - ticker: VAS.AX
+        units: 18.93
+        purchase_date: "2025-07-01"
+        purchase_price: 105.68
+
+      - ticker: ASIA.AX
+        units: 84.32
+        purchase_date: "2025-07-01"
+        purchase_price: 11.86
+
+      - ticker: GOLD.AX
+        units: 10.76
+        purchase_date: "2025-07-01"
+        purchase_price: 46.48
+
+  # Australia-heavy dividend-style core — A$10,000 total · purchased 2025-07-01
+  # VAS 60% · VGS 20% · IAF 10% · AAA 10%
+  - name: Australia-heavy core
+    color: "#e06830"
+    holdings:
+      - ticker: VAS.AX
+        units: 56.78
+        purchase_date: "2025-07-01"
+        purchase_price: 105.68
+
+      - ticker: VGS.AX
+        units: 14.19
+        purchase_date: "2025-07-01"
+        purchase_price: 140.98
+
+      - ticker: IAF.AX
+        units: 9.63
+        purchase_date: "2025-07-01"
+        purchase_price: 103.84
+
+      - ticker: AAA.AX
+        units: 19.97
+        purchase_date: "2025-07-01"
+        purchase_price: 50.08
+
+  # Anti-tech / lower-volatility — A$10,000 total · purchased 2025-07-01
+  # VAS 35% · VGS 25% · IAF 25% · AAA 15%
+  - name: Anti-tech low-vol
+    color: "#508020"
+    holdings:
+      - ticker: VAS.AX
+        units: 33.12
+        purchase_date: "2025-07-01"
+        purchase_price: 105.68
+
+      - ticker: VGS.AX
+        units: 17.73
+        purchase_date: "2025-07-01"
+        purchase_price: 140.98
+
+      - ticker: IAF.AX
+        units: 24.08
+        purchase_date: "2025-07-01"
+        purchase_price: 103.84
+
+      - ticker: AAA.AX
+        units: 29.95
+        purchase_date: "2025-07-01"
+        purchase_price: 50.08
+
+  # Crisis hedge mix — A$10,000 total · purchased 2025-07-01
+  # IVV 30% · VAS 20% · GOLD 25% · IAF 15% · AAA 10%
+  - name: Crisis hedge
+    color: "#4a78a8"
+    holdings:
+      - ticker: IVV.AX
+        units: 47.88
+        purchase_date: "2025-07-01"
+        purchase_price: 62.66
+
+      - ticker: VAS.AX
+        units: 18.93
+        purchase_date: "2025-07-01"
+        purchase_price: 105.68
+
+      - ticker: GOLD.AX
+        units: 53.79
+        purchase_date: "2025-07-01"
+        purchase_price: 46.48
+
+      - ticker: IAF.AX
+        units: 14.44
+        purchase_date: "2025-07-01"
+        purchase_price: 103.84
+
+      - ticker: AAA.AX
+        units: 19.97
+        purchase_date: "2025-07-01"
+        purchase_price: 50.08
+
+  # Asia conviction — A$10,000 total · purchased 2025-07-01
+  # ASIA 40% · VGS 30% · IVV 20% · GOLD 10%
+  - name: Asia conviction
+    color: "#a83020"
+    holdings:
+      - ticker: ASIA.AX
+        units: 337.27
+        purchase_date: "2025-07-01"
+        purchase_price: 11.86
+
+      - ticker: VGS.AX
+        units: 21.28
+        purchase_date: "2025-07-01"
+        purchase_price: 140.98
+
+      - ticker: IVV.AX
+        units: 31.92
+        purchase_date: "2025-07-01"
+        purchase_price: 62.66
+
+      - ticker: GOLD.AX
+        units: 21.51
+        purchase_date: "2025-07-01"
+        purchase_price: 46.48
+
+  # Barbell portfolio — A$10,000 total · purchased 2025-07-01
+  # FANG 40% · AAA 30% · IAF 20% · GOLD 10%
+  - name: Barbell
+    color: "#4020a0"
+    holdings:
+      - ticker: FANG.AX
+        units: 121.29
+        purchase_date: "2025-07-01"
+        purchase_price: 32.98
+
+      - ticker: AAA.AX
+        units: 59.90
+        purchase_date: "2025-07-01"
+        purchase_price: 50.08
+
+      - ticker: IAF.AX
+        units: 19.26
+        purchase_date: "2025-07-01"
+        purchase_price: 103.84
+
+      - ticker: GOLD.AX
+        units: 21.51
+        purchase_date: "2025-07-01"
+        purchase_price: 46.48
+
+  # Simple 3-fund long-term core — A$10,000 total · purchased 2025-07-01
+  # VGS 50% · VAS 30% · IVV 20%
+  - name: Simple 3-fund core
+    color: "#207860"
+    holdings:
+      - ticker: VGS.AX
+        units: 35.47
+        purchase_date: "2025-07-01"
+        purchase_price: 140.98
+
+      - ticker: VAS.AX
+        units: 28.39
+        purchase_date: "2025-07-01"
+        purchase_price: 105.68
+
+      - ticker: IVV.AX
+        units: 31.92
+        purchase_date: "2025-07-01"
+        purchase_price: 62.66
+
+  # ── New single-ETF comparison portfolios — A$10,000 each · purchased 2025-07-01
+
+  - name: 100% VGS
+    color: "#38a048"
+    holdings:
+      - ticker: VGS.AX
+        units: 70.93
+        purchase_date: "2025-07-01"
+        purchase_price: 140.98
+
+  - name: 100% IAF
+    color: "#5880a0"
+    holdings:
+      - ticker: IAF.AX
+        units: 96.30
+        purchase_date: "2025-07-01"
+        purchase_price: 103.84
+
+  - name: 100% AAA
+    color: "#d08030"
+    holdings:
+      - ticker: AAA.AX
+        units: 199.68
+        purchase_date: "2025-07-01"
+        purchase_price: 50.08
