@@ -1386,12 +1386,15 @@ def render_portfolio_section(hd):
             f'</div>'
         )
 
-        rows = ""
+        rows      = ""
+        bar_segs  = ""
+        total_cv  = p["total_current_value"] or 1.0
         for h in p["holdings"]:
-            hgc  = "up" if h["gain"] >= 0 else "dn"
-            hsgn = "+" if h["gain"] >= 0 else ""
-            dot  = (f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
-                    f'background:{h["color"]};margin-right:6px;vertical-align:middle"></span>')
+            hgc     = "up" if h["gain"] >= 0 else "dn"
+            hsgn    = "+" if h["gain"] >= 0 else ""
+            pct_now = h["current_value"] / total_cv * 100
+            dot     = (f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
+                       f'background:{h["color"]};margin-right:6px;vertical-align:middle"></span>')
             rows += (
                 f"<tr>"
                 f"<td>{dot}<strong>{h['display']}</strong></td>"
@@ -1402,8 +1405,18 @@ def render_portfolio_section(hd):
                 f"<td>A${h['cost_basis']:,.0f}</td>"
                 f"<td>A${h['current_value']:,.0f}</td>"
                 f"<td class='{hgc}'>{hsgn}A${abs(h['gain']):,.0f}&nbsp;({hsgn}{h['gain_pct']:.1f}%)</td>"
+                f"<td style='color:var(--ink2)'>{pct_now:.1f}%</td>"
                 f"</tr>"
             )
+            bar_segs += (
+                f'<div title="{h["display"]} {pct_now:.1f}%" '
+                f'style="flex:{pct_now:.4f};background:{h["color"]}"></div>'
+            )
+
+        alloc_bar = (
+            f'<div style="display:flex;height:7px;border-radius:4px;overflow:hidden;margin:0 0 14px;gap:2px">'
+            f'{bar_segs}</div>'
+        )
 
         portfolio_sections += f"""
   <div style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
@@ -1414,6 +1427,7 @@ def render_portfolio_section(hd):
       <span style="flex:1;height:1px;background:var(--border)"></span>
     </div>
     {stat_cards}
+    {alloc_bar}
     <div style="overflow-x:auto">
       <table>
         <thead>
@@ -1421,6 +1435,7 @@ def render_portfolio_section(hd):
             <th>Ticker</th><th>Units</th><th>Purchased</th>
             <th>Buy Price</th><th>Current Price</th>
             <th>Cost Basis</th><th>Market Value</th><th>Gain / Loss</th>
+            <th>% Portfolio</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
