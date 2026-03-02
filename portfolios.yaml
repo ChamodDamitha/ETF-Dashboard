@@ -17,57 +17,57 @@
 
 portfolios:
 
-  # Portfolio 1 — A$10,000 total
+  # Portfolio 1 — A$10,000 total · purchased 2025-07-01
   # IVV 40% · FANG 20% · VAS 20% · GOLD 10% · ASIA 10%
   - name: Portfolio 1
     color: "#c8440a"
     holdings:
       - ticker: IVV.AX
-        units: 57.14
+        units: 63.84
         purchase_date: "2025-07-01"
-        purchase_price: 70.00   # 40% × A$10,000 = A$4,000 / A$70 = 57.14 units
+        purchase_price: 62.66
 
       - ticker: FANG.AX
-        units: 30.77
+        units: 60.64
         purchase_date: "2025-07-01"
-        purchase_price: 65.00   # 20% × A$10,000 = A$2,000 / A$65 = 30.77 units
+        purchase_price: 32.98
 
       - ticker: VAS.AX
-        units: 20.00
+        units: 18.93
         purchase_date: "2025-07-01"
-        purchase_price: 100.00  # 20% × A$10,000 = A$2,000 / A$100 = 20 units
+        purchase_price: 105.68
 
       - ticker: GOLD.AX
-        units: 33.33
+        units: 21.51
         purchase_date: "2025-07-01"
-        purchase_price: 30.00   # 10% × A$10,000 = A$1,000 / A$30 = 33.33 units
+        purchase_price: 46.48
 
       - ticker: ASIA.AX
-        units: 90.91
+        units: 84.32
         purchase_date: "2025-07-01"
-        purchase_price: 11.00   # 10% × A$10,000 = A$1,000 / A$11 = 90.91 units
+        purchase_price: 11.86
 
-  # Portfolio 2 — A$10,000 total
+  # Portfolio 2 — A$10,000 total · purchased 2025-07-01
   # IVV 30% · FANG 20% · VAS 30% · GOLD 20%
   - name: Portfolio 2
     color: "#1a7a4a"
     holdings:
       - ticker: IVV.AX
-        units: 42.86
+        units: 47.88
         purchase_date: "2025-07-01"
-        purchase_price: 70.00   # 30% × A$10,000 = A$3,000 / A$70 = 42.86 units
+        purchase_price: 62.66
 
       - ticker: FANG.AX
-        units: 30.77
+        units: 60.64
         purchase_date: "2025-07-01"
-        purchase_price: 65.00   # 20% × A$10,000 = A$2,000 / A$65 = 30.77 units
+        purchase_price: 32.98
 
       - ticker: VAS.AX
-        units: 30.00
+        units: 28.39
         purchase_date: "2025-07-01"
-        purchase_price: 100.00  # 30% × A$10,000 = A$3,000 / A$100 = 30 units
+        purchase_price: 105.68
 
       - ticker: GOLD.AX
-        units: 66.67
+        units: 43.03
         purchase_date: "2025-07-01"
-        purchase_price: 30.00   # 20% × A$10,000 = A$2,000 / A$30 = 66.67 units
+        purchase_price: 46.48
