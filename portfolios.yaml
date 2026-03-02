@@ -1,0 +1,73 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# My ETF Portfolios
+# ──────────────────────────────────────────────────────────────────────────────
+# Each portfolio has a name, optional color, and a list of holdings.
+#
+# Required per holding:
+#   ticker        — Yahoo Finance symbol (e.g. IVV.AX, VAS.AX)
+#   units         — Number of units held
+#   purchase_date — YYYY-MM-DD
+#
+# Optional per holding:
+#   purchase_price — Override the historical closing price used for cost basis
+#
+# Optional per portfolio:
+#   color — Hex color for this portfolio's chart line (auto-assigned if omitted)
+# ──────────────────────────────────────────────────────────────────────────────
+
+portfolios:
+
+  # Portfolio 1 — A$10,000 total · purchased 2025-07-01
+  # IVV 40% · FANG 20% · VAS 20% · GOLD 10% · ASIA 10%
+  - name: Portfolio 1
+    color: "#c8440a"
+    holdings:
+      - ticker: IVV.AX
+        units: 63.84
+        purchase_date: "2025-07-01"
+        purchase_price: 62.66
+
+      - ticker: FANG.AX
+        units: 60.64
+        purchase_date: "2025-07-01"
+        purchase_price: 32.98
+
+      - ticker: VAS.AX
+        units: 18.93
+        purchase_date: "2025-07-01"
+        purchase_price: 105.68
+
+      - ticker: GOLD.AX
+        units: 21.51
+        purchase_date: "2025-07-01"
+        purchase_price: 46.48
+
+      - ticker: ASIA.AX
+        units: 84.32
+        purchase_date: "2025-07-01"
+        purchase_price: 11.86
+
+  # Portfolio 2 — A$10,000 total · purchased 2025-07-01
+  # IVV 30% · FANG 20% · VAS 30% · GOLD 20%
+  - name: Portfolio 2
+    color: "#1a7a4a"
+    holdings:
+      - ticker: IVV.AX
+        units: 47.88
+        purchase_date: "2025-07-01"
+        purchase_price: 62.66
+
+      - ticker: FANG.AX
+        units: 60.64
+        purchase_date: "2025-07-01"
+        purchase_price: 32.98
+
+      - ticker: VAS.AX
+        units: 28.39
+        purchase_date: "2025-07-01"
+        purchase_price: 105.68
+
+      - ticker: GOLD.AX
+        units: 43.03
+        purchase_date: "2025-07-01"
+        purchase_price: 46.48
