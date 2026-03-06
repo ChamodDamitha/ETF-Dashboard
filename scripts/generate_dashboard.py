@@ -10,7 +10,7 @@ DYNAMIC ELEMENTS:
   ✓ 14-month monthly indexed chart
   ✓ Portfolio allocations — AI-recommended by Claude using live metrics, returns & volatility
   ✓ 10-year portfolio simulation — all returns from Yahoo Finance history
-  ✓ Verdict ratings — AI-powered using live metrics, historical data & news context
+  ✓ Verdict ratings — AI-powered using live metrics & historical data
 
 PORTFOLIO STRATEGIES:
   AI-powered — Claude recommends 3 distinct strategies based on live data
@@ -872,19 +872,18 @@ Rules:
         return None
 
 
-# ── STEP 4: AI-generated news & insights via Anthropic API ───────────────────
+# ── STEP 4: AI-generated verdicts via Anthropic API ──────────────────────────
 
 def fetch_ai_news(etf_data, now, regime=None):
     """
-    Calls the Anthropic API with today's live ETF metrics and asks Claude to:
-    1. Identify 6 current macro/geopolitical news themes affecting these ETFs
-    2. Write a short insight paragraph for each ETF
-    Returns: { "news": [...6 cards...], "insights": {ticker: text} }
-    Falls back to placeholder text if API key missing or call fails.
+    Calls the Anthropic API with today's live ETF metrics and asks Claude to
+    generate verdict ratings for each ETF.
+    Returns: { "verdicts": {ticker: {...}} }
+    Falls back to rule-based verdicts if API key missing or call fails.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        print("  ⚠ ANTHROPIC_API_KEY not set — skipping AI news section")
+        print("  ⚠ ANTHROPIC_API_KEY not set — using rule-based verdicts")
         return _fallback_news(etf_data)
 
     # Build a concise data summary to send to Claude (includes historical returns)
@@ -921,33 +920,13 @@ Here is today's live ETF data including multi-year historical returns from Yahoo
 
 Your task: Generate a JSON object with exactly this structure:
 {{
-  "news": [
-    {{
-      "severity": "red"|"amber"|"green",
-      "tag": "short category label (e.g. Trade Policy, Geopolitics, Monetary Policy)",
-      "headline": "concise news headline (max 12 words)",
-      "body": "2-3 sentence explanation of the news event and why it matters for markets (max 60 words)",
-      "impact": "1-2 sentences on which specific ETFs are affected and how (bullish/bearish)",
-      "source": "Primary publisher name, e.g. Reuters, Bloomberg, RBA, IMF, WSJ, AFR, CNBC"
-    }},
-    ... (exactly 6 news items total)
-  ],
-  "insights": {{
-    {', '.join(f'"{t}": "2-3 sentence insight for {t} (max 70 words)"' for t in etf_data)}
-  }},
   "verdicts": {{
     {', '.join(f'"{t}": {{"label": "Strong Buy|Buy|Accumulate|Hold|Watch", "cls": "buy|accum|hold|watch", "note": "max 25 words"}}' for t in etf_data)}
   }}
 }}
 
 Rules:
-- News items must reflect the MOST IMPACTFUL macro events happening RIGHT NOW as of {now.strftime('%d %B %Y')} — prioritise breaking or fast-moving developments over background themes (tariffs, central bank decisions, geopolitical flashpoints, earnings surprises, commodity moves, FX shifts)
-- Each news item must be a SPECIFIC recent event, not a vague ongoing theme — name dates, countries, rates, or figures where possible
-- source: name the single most credible publisher covering this event (Reuters, Bloomberg, AFR, RBA, WSJ, CNBC, IMF, etc.)
-- Severity: red = high negative risk, amber = mixed/uncertain, green = positive catalyst
-- Insights must reference the actual YTD and 1Y return numbers provided
-- 2 red items, 2 amber items, 2 green items
-- Verdicts MUST be informed by: (a) multi-year historical return pattern, (b) current YTD/1Y momentum, (c) distance from 52-week high, (d) annualised volatility, (e) the macro news themes identified above
+- Verdicts MUST be informed by: (a) multi-year historical return pattern, (b) current YTD/1Y momentum, (c) distance from 52-week high, (d) annualised volatility, (e) current macro environment
 - cls values: "buy" for Strong Buy or Buy, "accum" for Accumulate, "hold" for Hold, "watch" for Watch
 - Return ONLY the JSON object, no preamble, no markdown fences"""
 
@@ -977,30 +956,21 @@ Rules:
             if text.endswith("```"):
                 text = "\n".join(text.split("\n")[:-1])
             result = _json_module.loads(text)
-            n_news     = len(result.get('news', []))
-            n_insights = len(result.get('insights', {}))
             n_verdicts = len(result.get('verdicts', {}))
-            print(f"  ✓ AI content generated ({n_news} news, {n_insights} insights, {n_verdicts} verdicts)")
+            print(f"  ✓ AI verdicts generated ({n_verdicts} verdicts)")
             return result
     except Exception as e:
-        print(f"  ⚠ AI news fetch failed: {e} — using fallback")
+        print(f"  ⚠ AI verdicts fetch failed: {e} — using rule-based fallback")
         return _fallback_news(etf_data)
 
 
 def _fallback_news(etf_data):
-    """Minimal fallback if Anthropic API unavailable — uses rule-based verdicts."""
-    news = [
-        {"severity": "amber", "tag": "Markets", "headline": "Live market data loaded — AI news unavailable",
-         "body": "Set the ANTHROPIC_API_KEY secret in GitHub to enable AI-generated daily news and ETF insights.",
-         "impact": "Add ANTHROPIC_API_KEY to your GitHub repo secrets to enable this section."},
-    ]
-    insights = {t: f"{t}: Add ANTHROPIC_API_KEY to GitHub secrets to enable AI-generated insights for each ETF." for t in etf_data}
-    # Generate rule-based verdicts as fallback
+    """Rule-based verdict fallback when Anthropic API is unavailable."""
     verdicts = {}
     for ticker, d in etf_data.items():
         label, cls, note = _compute_verdict_rules(d.get("ytd_ret"), d.get("one_yr_ret"), d.get("from_high"))
         verdicts[ticker] = {"label": label, "cls": cls, "note": note}
-    return {"news": news, "insights": insights, "verdicts": verdicts}
+    return {"verdicts": verdicts}
 
 
 # ── Verdict engine ────────────────────────────────────────────────────────────
@@ -1687,45 +1657,6 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
                         '<span class="ld" style="background:#9a9690;border-style:dashed"></span>'
                         '<span style="color:var(--ink2)">ASX 200</span></button>')
 
-    # ── AI content: news, insights ───────────────────────────────────────────
-    news_items  = (ai_content or {}).get("news", [])
-    insights    = (ai_content or {}).get("insights", {})
-
-    news_cards_html = ""
-    for item in news_items:
-        sev    = item.get("severity", "amber")
-        tag    = item.get("tag", "")
-        head   = item.get("headline", "")
-        body   = item.get("body", "")
-        impact = item.get("impact", "")
-        source = item.get("source", "")
-        icon   = {"red": "🔴", "amber": "🟡", "green": "🟢"}.get(sev, "⚪")
-        src_q  = urllib.parse.quote_plus(f"{head} {source}".strip())
-        src_url = f"https://news.google.com/search?q={src_q}&hl=en-AU&gl=AU&ceid=AU:en"
-        src_html = (f'<a href="{src_url}" target="_blank" rel="noopener" class="news-src">'
-                    f'↗ {source}</a>') if source else ""
-        news_cards_html += f"""
-      <div class="news-block {sev}">
-        <div class="news-tag">{icon} {tag}{("&ensp;" + src_html) if src_html else ""}</div>
-        <div class="news-head">{head}</div>
-        <div class="news-body">{body}</div>
-        <div class="news-impact">⚡ {impact}</div>
-      </div>"""
-
-    if not news_cards_html:
-        news_cards_html = '<div style="color:#5a5650;font-size:10px;padding:12px 0">No news available. Set ANTHROPIC_API_KEY to enable AI-generated news.</div>'
-
-    insights_html = ""
-    for ticker in tickers:
-        d    = etf_data[ticker]
-        text = insights.get(ticker, "")
-        if text:
-            insights_html += f"""
-      <div class="ins {d['cls']}">
-        <div class="it">{ticker} — {d['name']}</div>
-        <div class="ix">{text}</div>
-      </div>"""
-
     # ── Correlation heatmap ───────────────────────────────────────────────────
     corr_html = ""
     if correlations:
@@ -1874,7 +1805,6 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
     css_vars      = ";".join(f"--{etf_data[t]['cls']}:{etf_data[t]['color']}" for t in tickers)
     pc_before_css = "".join(f".pc.{etf_data[t]['cls']}::before{{background:var(--{etf_data[t]['cls']})}}" for t in tickers)
     pc_ticker_css = "".join(f".pc.{etf_data[t]['cls']} .pc-ticker{{color:var(--{etf_data[t]['cls']})}}" for t in tickers)
-    ins_css       = "".join(f".ins.{etf_data[t]['cls']}{{border-color:var(--{etf_data[t]['cls']})}}" for t in tickers)
     grid_cols     = f"repeat({len(tickers)},1fr)"
 
     return f"""<!DOCTYPE html>
@@ -1938,29 +1868,10 @@ tr:last-child td{{border-bottom:none;}}
 .port-chart-card{{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:22px;margin-top:20px;}}
 .port-stats{{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:14px;}}
 .alloc-note{{font-size:8.5px;color:var(--ink3);margin-top:10px;font-style:italic;}}
-.news-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-bottom:24px;}}
-.news-block{{background:var(--card);border-radius:3px;padding:15px 17px;border-left:3px solid var(--border);}}
-.news-block.red{{border-color:#c8440a;}}.news-block.amber{{border-color:#b8920a;}}.news-block.green{{border-color:#1a7a4a;}}
-.news-tag{{font-size:8px;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;font-weight:500;}}
-.news-block.red .news-tag{{color:#c8440a;}}.news-block.amber .news-tag{{color:#b8920a;}}.news-block.green .news-tag{{color:#4aaa74;}}
-.news-head{{font-size:12px;color:var(--ink);font-weight:500;margin-bottom:6px;line-height:1.4;}}
-.news-body{{font-size:10px;color:var(--ink2);line-height:1.65;}}
-.news-impact{{font-size:9px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);letter-spacing:.5px;}}
-.news-src{{font-size:7.5px;letter-spacing:.5px;text-decoration:none;opacity:.7;font-weight:400;}}
-.news-src:hover{{opacity:1;text-decoration:underline;}}
-.news-block.red .news-src{{color:#c8440a;}}.news-block.amber .news-src{{color:#b8920a;}}.news-block.green .news-src{{color:#1a7a4a;}}
-.news-block.red .news-impact{{color:#e87050;}}.news-block.amber .news-impact{{color:#d8a830;}}.news-block.green .news-impact{{color:#4aaa74;}}
-.ig{{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:22px;}}
-.ins{{border-left:2px solid var(--border);padding-left:13px;}}
-{ins_css}
-.it{{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px;}}
-.ix{{font-size:11px;color:var(--ink2);line-height:1.75;}}
 footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:8.5px;color:var(--ink3);}}
 @media(max-width:1024px){{
   .cards-grid{{grid-template-columns:repeat(3,1fr);}}
   .verdict-row{{grid-template-columns:repeat(3,1fr);}}
-  .news-grid{{grid-template-columns:repeat(2,1fr);}}
-  .ig{{grid-template-columns:repeat(2,1fr);}}
 }}
 @media(max-width:768px){{
   header{{padding:20px 22px 14px;}}
@@ -1968,8 +1879,6 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
   footer{{padding:12px 20px;flex-direction:column;gap:5px;}}
   .cards-grid{{grid-template-columns:repeat(2,1fr);gap:9px;}}
   .verdict-row{{grid-template-columns:repeat(2,1fr);}}
-  .news-grid{{grid-template-columns:1fr;}}
-  .ig{{grid-template-columns:1fr;}}
   .port-stats{{grid-template-columns:repeat(2,1fr);}}
   .chart-card,.tbl-card{{padding:16px 14px;}}
   .dark{{padding:20px 18px;}}
@@ -1983,8 +1892,6 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
   footer{{padding:10px 12px;flex-direction:column;gap:5px;}}
   .cards-grid{{grid-template-columns:repeat(2,1fr);gap:8px;}}
   .verdict-row{{grid-template-columns:repeat(2,1fr);gap:8px;}}
-  .news-grid{{grid-template-columns:1fr;}}
-  .ig{{grid-template-columns:1fr;}}
   .port-stats{{grid-template-columns:1fr;}}
   .chart-card,.tbl-card{{padding:12px 10px;}}
   .dark{{padding:16px 12px;}}
@@ -2034,15 +1941,10 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
   {corr_html}
   {corr_ytd_html}
 
-  <div class="sec-label">Verdict — {verdict_source} · Live Yahoo Finance Data + News Context{regime_badge}</div>
+  <div class="sec-label">Verdict — {verdict_source} · Live Yahoo Finance Data{regime_badge}</div>
   <div class="verdict-row">{verdicts_html}</div>
 
   <div class="dark">
-    <div class="sec-label">Global Events Impacting Your Portfolio — {now.strftime('%d %b %Y')}</div>
-    <div class="news-grid">{news_cards_html}</div>
-
-    {'<div class="sec-label">ETF Insights — In Context of Global Events</div><div class="ig">' + insights_html + '</div>' if insights_html else ''}
-
     <div class="sec-label">AI-Powered Portfolio Strategies — Allocations Recommended by Claude Based on Today's Live Data</div>
 
     <div class="tbl-card" style="padding:18px 20px;margin-bottom:0">
@@ -2254,7 +2156,7 @@ def main():
     dca_series       = build_dca_series(etf_data, portfolios, now)
     benchmark_series = fetch_benchmark_series(now)
 
-    print("\n📰 Fetching AI-generated news, insights & what-changed (Anthropic API)...")
+    print("\n🤖 Fetching AI-generated verdicts & what-changed (Anthropic API)...")
     ai_content   = fetch_ai_news(etf_data, now, regime=regime)
     what_changed = generate_whatchanged_summary(etf_data, snapshot, ai_content, now)
 
