@@ -662,7 +662,7 @@ def load_last_snapshot():
     return {}
 
 
-def save_snapshot(etf_data, ai_content, now):
+def save_snapshot(etf_data, verdicts, now):
     """Persist key metrics and verdicts to data/last_run.json for tomorrow's diff."""
     SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -673,295 +673,10 @@ def save_snapshot(etf_data, ai_content, now):
                  "sortino_1y", "max_drawdown", "curr_drawdown", "from_high")}
             for t, d in etf_data.items()
         },
-        "verdicts": {t: v.get("label") for t, v in
-                     (ai_content or {}).get("verdicts", {}).items()},
+        "verdicts": {t: v.get("label") for t, v in verdicts.items()},
     }
     with open(SNAPSHOT_PATH, "w") as f:
         _json_module.dump(payload, f, indent=2)
-
-
-def generate_whatchanged_summary(etf_data, snapshot, ai_content, now):
-    """
-    Calls Claude with a diff of today vs yesterday's metrics and asks for a
-    concise narrative of what materially changed.  Returns an HTML string.
-    Falls back to a plain text diff if the API call fails.
-    """
-    if not snapshot:
-        return ""
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return ""
-
-    prev_date  = snapshot.get("date", "previous run")
-    prev_etfs  = snapshot.get("etf_data", {})
-    prev_verd  = snapshot.get("verdicts", {})
-    curr_verd  = {t: v.get("label") for t, v in
-                  (ai_content or {}).get("verdicts", {}).items()}
-
-    diff_lines = [f"Previous run: {prev_date}  →  Today: {now.strftime('%d %b %Y')}\n"]
-    for t, d in etf_data.items():
-        p = prev_etfs.get(t, {})
-        parts = []
-        for key, label in [("price", "price"), ("one_yr_ret", "1Y"), ("ytd_ret", "YTD"),
-                            ("sharpe_1y", "Sharpe"), ("curr_drawdown", "drawdown")]:
-            cur = d.get(key)
-            prv = p.get(key)
-            if cur is not None and prv is not None:
-                delta = cur - prv
-                if abs(delta) > 0.1:
-                    parts.append(f"{label}: {prv:+.2f}→{cur:+.2f} (Δ{delta:+.2f})")
-        vd_change = ""
-        if prev_verd.get(t) and curr_verd.get(t) and prev_verd[t] != curr_verd[t]:
-            vd_change = f"  verdict: {prev_verd[t]}→{curr_verd[t]}"
-        if parts or vd_change:
-            diff_lines.append(f"{t}: {', '.join(parts)}{vd_change}")
-
-    if len(diff_lines) <= 1:
-        return ""
-    diff_text = "\n".join(diff_lines)
-
-    prompt = f"""You are writing a concise daily briefing for an Australian ETF investor.
-
-Here are the changes from the previous trading day:
-{diff_text}
-
-Write a single short paragraph (3-5 sentences, max 80 words) summarising what materially changed.
-Highlight any verdict upgrades/downgrades, meaningful price moves, and trend shifts.
-Be specific: mention ticker names and numbers. Do not use markdown. Plain prose only."""
-
-    try:
-        payload = _json_module.dumps({
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 200,
-            "messages": [{"role": "user", "content": prompt}]
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages", data=payload,
-            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
-                     "content-type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            raw  = _json_module.loads(resp.read().decode())
-            text = raw["content"][0]["text"].strip()
-            print(f"  ✓ What-changed summary generated ({len(text)} chars)")
-            return text
-    except Exception as e:
-        print(f"  ⚠ What-changed summary failed: {e}")
-        return ""
-
-
-# ── STEP 3b: AI-generated portfolio strategies via Anthropic API ──────────────
-
-def generate_ai_portfolios(etf_data, now):
-    """
-    Calls the Anthropic API to generate 3 distinct AI-recommended portfolio
-    strategies based on today's live ETF metrics, returns & volatility.
-
-    Returns a dict in the same format as compute_portfolio_allocations(), with
-    an added 'rationale' field per portfolio.
-    Falls back to None if the API is unavailable (caller then uses
-    compute_portfolio_allocations() as fallback).
-    """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return None
-
-    tickers = list(etf_data.keys())
-
-    summary_lines = [f"Date: {now.strftime('%d %B %Y')} (AEST)\n"]
-    for ticker, d in etf_data.items():
-        price    = f"${d['price']:.2f}"       if d.get('price')        else 'N/A'
-        ytd      = f"{d['ytd_ret']:+.1f}%"    if d.get('ytd_ret') is not None    else 'N/A'
-        one_yr   = f"{d['one_yr_ret']:+.1f}%" if d.get('one_yr_ret') is not None else 'N/A'
-        vol      = f"{d['vol_1y']:.1f}%"      if d.get('vol_1y') is not None     else 'N/A'
-        frm_high = f"{d['from_high']:+.1f}%"  if d.get('from_high') is not None  else 'N/A'
-        ann      = d.get('annual_returns', {})
-        recent   = {yr: v for yr, v in ann.items() if int(yr) >= (now.year - 5)}
-        ann_str  = ", ".join(f"{yr}:{v:+.1f}%" for yr, v in sorted(recent.items()))
-        summary_lines.append(
-            f"{ticker} ({d['name']}): price={price}, YTD={ytd}, 1Y={one_yr}, "
-            f"vol={vol}, from52wHigh={frm_high}, annualReturns=[{ann_str}]"
-        )
-    data_summary = "\n".join(summary_lines)
-    tickers_list = ", ".join(tickers)
-
-    prompt = f"""You are a portfolio manager constructing 3 distinct ETF portfolio strategies for an Australian retail investor.
-
-Available ETFs: {tickers_list}
-
-Today's live data:
-{data_summary}
-
-Create exactly 3 portfolios with genuinely different investment philosophies (e.g. aggressive growth, balanced, defensive/income).
-For each portfolio:
-1. Choose a short descriptive name (3-4 words max, e.g. "Growth Tilt", "Defensive Core", "Balanced Blend")
-2. Allocate weights across ALL six ETFs (must sum to exactly 100, whole numbers only, minimum 0)
-3. Write a single concise sentence (max 20 words) explaining the strategy rationale based on the current data
-
-Return ONLY a JSON object with this exact structure:
-{{
-  "portfolios": [
-    {{
-      "name": "Portfolio Name",
-      "rationale": "One sentence rationale grounded in today's data.",
-      "allocations": {{"IVV": 30, "FANG": 20, "VAS": 20, "QAU": 10, "GOLD": 10, "VGS": 10}}
-    }},
-    {{...}},
-    {{...}}
-  ]
-}}
-
-Rules:
-- Each portfolio's allocations must sum to exactly 100
-- All weights must be non-negative integers
-- The 3 portfolios must be meaningfully distinct from each other
-- Base the allocations on the actual performance data provided
-- Return ONLY the JSON, no markdown fences, no commentary"""
-
-    try:
-        payload = _json_module.dumps({
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 800,
-            "messages": [{"role": "user", "content": prompt}]
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=payload,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            raw  = _json_module.loads(resp.read().decode("utf-8"))
-            text = raw["content"][0]["text"].strip()
-            if text.startswith("```"):
-                text = "\n".join(text.split("\n")[1:])
-            if text.endswith("```"):
-                text = "\n".join(text.split("\n")[:-1])
-            result = _json_module.loads(text)
-
-        portfolios_ai = result.get("portfolios", [])
-        if len(portfolios_ai) != 3:
-            raise ValueError(f"Expected 3 portfolios, got {len(portfolios_ai)}")
-
-        colors = ["#c8440a", "#1a7a4a", "#4a6ad8"]
-        dashed = [False, False, True]
-        portfolios_dict = {}
-        for i, p in enumerate(portfolios_ai):
-            raw_allocs = p.get("allocations", {})
-            allocs = {t: raw_allocs.get(t, 0) / 100.0 for t in tickers}
-            total  = sum(allocs.values()) or 1
-            allocs = {t: round(v / total, 4) for t, v in allocs.items()}
-            portfolios_dict[p["name"]] = {
-                "allocs":    allocs,
-                "color":     colors[i],
-                "dashed":    dashed[i],
-                "rationale": p.get("rationale", ""),
-            }
-
-        print(f"  ✓ AI portfolios: {', '.join(portfolios_dict.keys())}")
-        return portfolios_dict
-
-    except Exception as e:
-        print(f"  ⚠ AI portfolio generation failed: {e} — using computed fallback")
-        return None
-
-
-# ── STEP 4: AI-generated verdicts via Anthropic API ──────────────────────────
-
-def fetch_ai_news(etf_data, now, regime=None):
-    """
-    Calls the Anthropic API with today's live ETF metrics and asks Claude to
-    generate verdict ratings for each ETF.
-    Returns: { "verdicts": {ticker: {...}} }
-    Falls back to rule-based verdicts if API key missing or call fails.
-    """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        print("  ⚠ ANTHROPIC_API_KEY not set — using rule-based verdicts")
-        return _fallback_news(etf_data)
-
-    # Build a concise data summary to send to Claude (includes historical returns)
-    summary_lines = [f"Date: {now.strftime('%d %B %Y')} (AEST)\n"]
-    if regime:
-        rlabel, _, rdesc = regime
-        summary_lines.append(f"Market regime: {rlabel.upper()} — {rdesc}\n")
-    for ticker, d in etf_data.items():
-        price    = f"${d['price']:.2f}"       if d.get('price')    else 'N/A'
-        day      = f"{d['day_chg']:+.2f}%"    if d.get('day_chg')  else 'N/A'
-        ytd      = f"{d['ytd_ret']:+.1f}%"    if d.get('ytd_ret')  else 'N/A'
-        one_yr   = f"{d['one_yr_ret']:+.1f}%" if d.get('one_yr_ret') else 'N/A'
-        frm_high = f"{d['from_high']:+.1f}%"  if d.get('from_high') else 'N/A'
-        vol      = f"{d['vol_1y']:.1f}%"      if d.get('vol_1y')   else 'N/A'
-        sharpe   = f"{d['sharpe_1y']:.2f}"    if d.get('sharpe_1y') is not None else 'N/A'
-        drawdn   = f"{d['curr_drawdown']:+.1f}%" if d.get('curr_drawdown') is not None else 'N/A'
-        ma_sig   = ("above" if d.get("is_above_200ma") else "below") if d.get("is_above_200ma") is not None else "N/A"
-        # Include last 5 years of annual returns for historical context
-        ann = d.get('annual_returns', {})
-        recent_ann = {yr: v for yr, v in ann.items() if int(yr) >= (now.year - 5)}
-        ann_str = ", ".join(f"{yr}:{v:+.1f}%" for yr, v in sorted(recent_ann.items()))
-        summary_lines.append(
-            f"{ticker} ({d['name']}): "
-            f"price={price}, day={day}, YTD={ytd}, 1Y={one_yr}, "
-            f"from52wHigh={frm_high}, vol={vol}, Sharpe={sharpe}, "
-            f"drawdown={drawdn}, 200dMA={ma_sig}, annualReturns=[{ann_str}]"
-        )
-    data_summary = "\n".join(summary_lines)
-
-    prompt = f"""You are a senior market analyst writing a daily ASX ETF briefing for an Australian investor.
-
-Here is today's live ETF data including multi-year historical returns from Yahoo Finance:
-{data_summary}
-
-Your task: Generate a JSON object with exactly this structure:
-{{
-  "verdicts": {{
-    {', '.join(f'"{t}": {{"label": "Strong Buy|Buy|Accumulate|Hold|Watch", "cls": "buy|accum|hold|watch", "note": "max 25 words"}}' for t in etf_data)}
-  }}
-}}
-
-Rules:
-- Verdicts MUST be informed by: (a) multi-year historical return pattern, (b) current YTD/1Y momentum, (c) distance from 52-week high, (d) annualised volatility, (e) current macro environment
-- cls values: "buy" for Strong Buy or Buy, "accum" for Accumulate, "hold" for Hold, "watch" for Watch
-- Return ONLY the JSON object, no preamble, no markdown fences"""
-
-    try:
-        payload = _json_module.dumps({
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 2000,
-            "messages": [{"role": "user", "content": prompt}]
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=payload,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            raw = _json_module.loads(resp.read().decode("utf-8"))
-            text = raw["content"][0]["text"].strip()
-            # Strip markdown fences if present
-            if text.startswith("```"):
-                text = "\n".join(text.split("\n")[1:])
-            if text.endswith("```"):
-                text = "\n".join(text.split("\n")[:-1])
-            result = _json_module.loads(text)
-            n_verdicts = len(result.get('verdicts', {}))
-            print(f"  ✓ AI verdicts generated ({n_verdicts} verdicts)")
-            return result
-    except Exception as e:
-        print(f"  ⚠ AI verdicts fetch failed: {e} — using rule-based fallback")
-        return _fallback_news(etf_data)
 
 
 def _fallback_news(etf_data):
@@ -1542,7 +1257,7 @@ def generate_html(etf_data, portfolios, portfolio_series, now, ai_content=None,
 
     # Verdict row
     verdicts_html = ""
-    verdict_source = "AI-Powered" if ai_verdicts else "Rules-Based"
+    verdict_source = "Rules-Based"
     regime_badge  = ""
     if regime:
         rlabel, rcolor, rdesc = regime
@@ -1945,7 +1660,7 @@ footer{{padding:14px 48px;border-top:1px solid var(--border);display:flex;justif
   <div class="verdict-row">{verdicts_html}</div>
 
   <div class="dark">
-    <div class="sec-label">AI-Powered Portfolio Strategies — Allocations Recommended by Claude Based on Today's Live Data</div>
+    <div class="sec-label">Portfolio Strategies — Algorithmic Allocations Based on Today's Live Data</div>
 
     <div class="tbl-card" style="padding:18px 20px;margin-bottom:0">
       <div style="overflow-x:auto">
@@ -2141,11 +1856,8 @@ def main():
     rlabel, rcolor, rdesc = regime
     print(f"  Regime: {rlabel.upper()} — {rdesc}")
 
-    print("\n🤖 Generating AI-powered portfolio strategies (Anthropic API)...")
-    portfolios = generate_ai_portfolios(etf_data, now)
-    if portfolios is None:
-        print("  Falling back to algorithmic portfolios...")
-        portfolios = compute_portfolio_allocations(etf_data)
+    print("\n📐 Computing portfolio strategies...")
+    portfolios = compute_portfolio_allocations(etf_data)
     for pname, pmeta in portfolios.items():
         print(f"  {pname:15s} → {allocation_desc(pmeta['allocs'])}")
 
@@ -2156,9 +1868,9 @@ def main():
     dca_series       = build_dca_series(etf_data, portfolios, now)
     benchmark_series = fetch_benchmark_series(now)
 
-    print("\n🤖 Fetching AI-generated verdicts & what-changed (Anthropic API)...")
-    ai_content   = fetch_ai_news(etf_data, now, regime=regime)
-    what_changed = generate_whatchanged_summary(etf_data, snapshot, ai_content, now)
+    print("\n📊 Computing verdicts (rule-based)...")
+    ai_content   = _fallback_news(etf_data)
+    what_changed = ""
 
     print("\n📁 Loading portfolios from portfolios.yaml...")
     portfolios_cfg = load_portfolio_config()
@@ -2179,7 +1891,7 @@ def main():
         print("  No portfolios.yaml found or file is empty — portfolio section skipped.")
 
     print("\n💾 Saving snapshot...")
-    save_snapshot(etf_data, ai_content, now)
+    save_snapshot(etf_data, ai_content.get("verdicts", {}), now)
 
     print("\n🎨 Generating HTML...")
     html = generate_html(
