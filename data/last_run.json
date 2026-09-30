@@ -1,104 +1,104 @@
 {
-  "date": "2026-09-29",
+  "date": "2026-09-30",
   "etf_data": {
     "IVV": {
-      "price": 72.85,
-      "one_yr_ret": 9.432857707291298,
-      "ytd_ret": 7.773642707465367,
-      "vol_1y": 10.34234593952982,
-      "sharpe_1y": 0.53,
-      "sortino_1y": 0.74,
+      "price": 73.19,
+      "one_yr_ret": 9.413663870039146,
+      "ytd_ret": 7.229042031996236,
+      "vol_1y": 10.343247403661927,
+      "sharpe_1y": 0.52,
+      "sortino_1y": 0.73,
       "max_drawdown": -95.6,
-      "curr_drawdown": -69.8,
-      "from_high": -1.0055714091588654
+      "curr_drawdown": -69.9,
+      "from_high": -0.5435521130588472
     },
     "FANG": {
-      "price": 37.13,
-      "one_yr_ret": 10.895817021725795,
-      "ytd_ret": 14.865446249892278,
-      "vol_1y": 21.65136448658373,
-      "sharpe_1y": 0.32,
-      "sortino_1y": 0.49,
+      "price": 37.5,
+      "one_yr_ret": 10.40846360677219,
+      "ytd_ret": 13.823165278989569,
+      "vol_1y": 21.666268245135775,
+      "sharpe_1y": 0.3,
+      "sortino_1y": 0.45,
       "max_drawdown": -42.1,
-      "curr_drawdown": -1.0,
-      "from_high": -3.7584240539139344
+      "curr_drawdown": -1.9,
+      "from_high": -2.799377916018658
     },
     "VAS": {
-      "price": 109.17,
-      "one_yr_ret": 0.9894457608772278,
-      "ytd_ret": 1.8135883071263237,
-      "vol_1y": 12.286909917970805,
-      "sharpe_1y": -0.25,
-      "sortino_1y": -0.36,
+      "price": 110.33,
+      "one_yr_ret": 1.441600433184087,
+      "ytd_ret": 2.1129022037175593,
+      "vol_1y": 12.289199179696274,
+      "sharpe_1y": -0.21,
+      "sortino_1y": -0.31,
       "max_drawdown": -35.8,
-      "curr_drawdown": -5.1,
-      "from_high": -5.176756709806301
+      "curr_drawdown": -4.9,
+      "from_high": -4.169200034743331
     },
     "QAU": {
-      "price": 31.09,
-      "one_yr_ret": 8.525938671409182,
-      "ytd_ret": -5.3423026957813535,
-      "vol_1y": 29.90324083998136,
-      "sharpe_1y": 0.15,
-      "sortino_1y": 0.2,
+      "price": 31.31,
+      "one_yr_ret": 5.686702326277726,
+      "ytd_ret": -6.187193340741615,
+      "vol_1y": 29.86803057975064,
+      "sharpe_1y": 0.06,
+      "sortino_1y": 0.07,
       "max_drawdown": -42.7,
-      "curr_drawdown": -25.2,
-      "from_high": -30.119127893908747
+      "curr_drawdown": -25.9,
+      "from_high": -29.62463474938189
     },
     "GOLD": {
-      "price": 54.17,
-      "one_yr_ret": 2.1196721521453687,
-      "ytd_ret": -9.236413734258575,
-      "vol_1y": 26.901066188361227,
-      "sharpe_1y": -0.07,
-      "sortino_1y": -0.09,
+      "price": 54.68,
+      "one_yr_ret": 0.6316112322598544,
+      "ytd_ret": -9.68656455090462,
+      "vol_1y": 26.88898777504434,
+      "sharpe_1y": -0.13,
+      "sortino_1y": -0.16,
       "max_drawdown": -91.6,
-      "curr_drawdown": -63.7,
-      "from_high": -25.508800880088007
+      "curr_drawdown": -63.9,
+      "from_high": -24.807480748074806
     },
     "VGS": {
-      "price": 162.5,
-      "one_yr_ret": 9.205602254897261,
-      "ytd_ret": 7.014096443901385,
-      "vol_1y": 9.912938364009277,
-      "sharpe_1y": 0.53,
-      "sortino_1y": 0.73,
+      "price": 163.25,
+      "one_yr_ret": 9.578881288276243,
+      "ytd_ret": 6.889116793744021,
+      "vol_1y": 9.901741170183104,
+      "sharpe_1y": 0.56,
+      "sortino_1y": 0.78,
       "max_drawdown": -23.4,
-      "curr_drawdown": -1.1,
-      "from_high": -1.3836630659060574
+      "curr_drawdown": -1.2,
+      "from_high": -0.9285107415948544
     },
     "SEMI": {
-      "price": 38.4,
-      "one_yr_ret": 101.7924409091127,
-      "ytd_ret": 74.99109443556753,
-      "vol_1y": 40.30637770886615,
-      "sharpe_1y": 2.43,
-      "sortino_1y": 3.59,
+      "price": 39.14,
+      "one_yr_ret": 103.67151083858684,
+      "ytd_ret": 74.53657904781852,
+      "vol_1y": 40.282819090664944,
+      "sharpe_1y": 2.47,
+      "sortino_1y": 3.64,
       "max_drawdown": -38.9,
-      "curr_drawdown": -13.0,
-      "from_high": -19.631645039765598
+      "curr_drawdown": -13.2,
+      "from_high": -18.082879866052743
     },
     "ASIA": {
-      "price": 21.06,
-      "one_yr_ret": 53.57180761997991,
-      "ytd_ret": 44.968639554146165,
-      "vol_1y": 37.69662096613319,
-      "sharpe_1y": 1.32,
-      "sortino_1y": 1.87,
+      "price": 21.38,
+      "one_yr_ret": 53.215979969186144,
+      "ytd_ret": 43.200727734057494,
+      "vol_1y": 37.7045431989809,
+      "sharpe_1y": 1.31,
+      "sortino_1y": 1.86,
       "max_drawdown": -59.6,
-      "curr_drawdown": -9.2,
-      "from_high": -12.867190732312798
+      "curr_drawdown": -10.3,
+      "from_high": -11.543235415804727
     },
     "HACK": {
-      "price": 18.45,
-      "one_yr_ret": 23.791462522873097,
-      "ytd_ret": 34.078362944494046,
-      "vol_1y": 30.060966033394486,
-      "sharpe_1y": 0.66,
-      "sortino_1y": 1.09,
+      "price": 18.71,
+      "one_yr_ret": 25.28064450452756,
+      "ytd_ret": 34.80903799422459,
+      "vol_1y": 30.054716152627048,
+      "sharpe_1y": 0.71,
+      "sortino_1y": 1.16,
       "max_drawdown": -28.4,
-      "curr_drawdown": -3.1,
-      "from_high": -2.5871172122492183
+      "curr_drawdown": -2.5,
+      "from_high": -1.214361140443508
     }
   },
   "verdicts": {
@@ -110,6 +110,6 @@
     "VGS": "Strong Buy",
     "SEMI": "Accumulate",
     "ASIA": "Buy",
-    "HACK": "Buy"
+    "HACK": "Strong Buy"
   }
 }
